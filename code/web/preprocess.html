@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" href="data:," />
+  <title>建库工具 · 一键生成嘴型图库</title>
+  <link rel="stylesheet" href="./style.css" />
+  <style>
+    .tool { max-width: 800px; margin: 0 auto; padding: 20px; }
+    video { max-width: 320px; background: #000; border-radius: 6px; display: none; margin-top: 8px; }
+    .log { background: #1f2430; color: #9fe6a0; font-family: Consolas, monospace; font-size: 12px; padding: 10px; border-radius: 6px; max-height: 160px; overflow: auto; white-space: pre-wrap; }
+    .req { font-size: 12px; color: #667; line-height: 1.6; background: #f0f3f7; padding: 8px 10px; border-radius: 6px; margin: 6px 0 10px; }
+    .gen-btn { padding: 10px 22px; font-size: 15px; background: #4caf50; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+    .gen-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .prog { height: 10px; background: #e4e8ee; border-radius: 5px; overflow: hidden; margin: 6px 0; display: none; }
+    .prog div { height: 100%; width: 0; background: #4caf50; transition: width .2s; }
+    .preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 4px; }
+    .preview-grid img { width: 100%; border-radius: 4px; }
+    .preview-grid .cap { font-size: 10px; color: #889; text-align: center; }
+    .slot-row { margin-bottom: 8px; }
+    .slot-row .slot-label { font-size: 12px; color: #556; font-weight: bold; margin-bottom: 2px; }
+    #done { display: none; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>建库工具 · 一键生成嘴型图库</h1>
+    <p class="sub">上传一段说话的短视频 → 自动抽出"嘴巴张开弧度"的图片序列（闭嘴→微张→大张）→ 主页面用能量范围控制显示
+      <a href="/web/index.html" style="color:#7fb3ff; margin-left:8px">▶ 去主页面</a>
+    </p>
+  </header>
+
+  <div class="tool">
+    <section class="panel" style="width:auto">
+      <h2>1. 上传视频</h2>
+      <div class="req">
+        📹 拍摄要求：<b>手机放稳、头别动、说话时嘴型有变化</b>（闭嘴说几句 → 嘴张大说几句），
+        时长 10 秒~1 分钟，带声音（mp4/webm 均可）。
+      </div>
+      <input type="file" id="video" accept="video/*" />
+      <video id="videoEl" controls playsinline></video>
+    </section>
+
+    <section class="panel" style="width:auto; margin-top:14px">
+      <h2>2. 生成参数</h2>
+      <div class="slider"><label>生成帧数（越多梯度越细） <span id="p_cnt_val"></span></label><input type="range" id="p_cnt" min="12" max="60" step="4" value="40" /></div>
+      <div class="slider"><label>库名 <input type="text" id="libname" value="lib_my" style="width:160px" /></label></div>
+      <div class="row" style="margin-top:10px">
+        <button class="gen-btn" id="generate" disabled>⚡ 一键生成嘴型图库</button>
+        <button id="reload" onclick="location.reload()">重置</button>
+      </div>
+      <div class="prog" id="prog"><div id="progbar"></div></div>
+    </section>
+
+    <section class="panel" style="width:auto; margin-top:14px">
+      <h2>3. 进度</h2>
+      <div class="log" id="log">（上传视频后开始）</div>
+    </section>
+
+    <section class="panel" style="width:auto; margin-top:14px; display:none" id="done">
+      <h2>✅ 生成完成</h2>
+      <div id="doneInfo"></div>
+      <div class="row" style="margin-top:8px">
+        <a href="/web/index.html" class="gen-btn" style="text-decoration:none">去主页面测试 ▶</a>
+      </div>
+      <h2 style="margin-top:14px">生成的嘴型图片预览（闭嘴 → 大张）</h2>
+      <div id="preview"></div>
+    </section>
+  </div>
+
+  <script type="module" src="./preprocess.mjs"></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "light-avatar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "轻量表情数字人（方案 B：真人关键帧拼接）—— 网页版，零运行时依赖",
+  "scripts": {
+    "start": "node server.mjs",
+    "pretest": "node tools/make-test-assets.mjs",
+    "test": "node --test",
+    "make-test-assets": "node tools/make-test-assets.mjs",
+    "make-test-video": "node tools/make-test-video.mjs",
+    "inspect-glb": "node tools/inspect-glb.mjs",
+    "smoke": "node tools/browser-smoke.mjs",
+    "test-build-lib": "node tools/build-lib-e2e.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.62.1"
+  }
+}
