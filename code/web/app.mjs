@@ -7,6 +7,7 @@ import { createComposer } from '../core/composer.mjs';
 import { autocorrPitch } from '../core/pitch.mjs';
 import { exprFromFeatures } from '../core/exprmapper.mjs';
 import { autoRange, levelFromDb } from '../core/levelmap.mjs';
+import { estimateFormants, classifyVowel, createVowelTracker } from '../core/formants.mjs';
 import { createRenderer } from './renderer.mjs';
 import { createAudioInput } from './audio.mjs';
 
@@ -15,9 +16,15 @@ const $ = (id) => document.getElementById(id);
 const stage = $('stage');
 const renderer = createRenderer(stage);
 const audio = createAudioInput();
-const meterRawCtx = $('meterRaw').getContext('2d');
-const meterMappedCtx = $('meterMapped').getContext('2d');
+// 能量条画布与宽度启动时缓存一次（主循环 60fps，避免每帧 DOM 查询）
+const meterRawEl = $('meterRaw');
+const meterMappedEl = $('meterMapped');
+const meterRawCtx = meterRawEl.getContext('2d');
+const meterMappedCtx = meterMappedEl.getContext('2d');
+const METER_RAW_W = meterRawEl.width;
+const METER_MAPPED_W = meterMappedEl.width;
 const statusEl = $('status');
+const setDs = (key, val) => { if (statusEl.dataset[key] !== val) statusEl.dataset[key] = val; };
 
 // —— 参数（滑块 → 状态机/合成器）——
 const stateMachine = createStateMachine({ levelsPerFrame: 60, silenceMs: 500 });
@@ -86,6 +93,8 @@ bindSlider('p_eloHold', 'eloHoldMs', (v) => Math.round(v) + 'ms');
 // —— 素材库加载 ——
 let lib = null;
 let libName = 'lib_test';
+let vowelMap = new Map();      // 元音关键帧：'a'~'u' → 按 slot 升序的帧数组（库含元音帧时自动启用元音驱动）
+const vowelTracker = createVowelTracker({ confirmFrames: 2, holdMs: 200 });
 
 /** 从服务器拉取素材库列表，填充下拉（只显示真实素材库，隐藏 lib_test* 测试库） */
 async function populateLibSelect() {
@@ -129,6 +138,13 @@ async function loadLib(name) {
       jobs.push(loadImage(`/api/lib/${name}/${f.file}`).then((im) => { f.img = im; }));
     }
   }
+  // 元音帧（独立索引，vowel 定嘴形、slot 定开合）
+  for (const list of idx.vowelFrames.values()) {
+    for (const f of list) {
+      f.img = null;
+      jobs.push(loadImage(`/api/lib/${name}/${f.file}`).then((im) => { f.img = im; }));
+    }
+  }
   for (const list of idx.clips.values()) {
     for (const c of list) {
       jobs.push(
@@ -151,24 +167,34 @@ async function loadLib(name) {
   // 运行时用 level 连续映射到序列位置，嘴型直接跟随能量波动（像能量条一样灵敏）
   const expr0 = [];
   faceSeq.length = 0;
-  exprFrames = { 1: [], 2: [] };
+  exprFrames = { 1: new Map(), 2: new Map() };  // 表情档：slot → 帧（预建索引，运行时免遍历）
+  exprFirst = { 1: null, 2: null };             // 各表情档无对应嘴档时的兜底帧
   for (const [key, list] of idx.frames.entries()) {
     const parts = key.split('_').map(Number);
     const slot = parts[0];
     const expr = parts[1] ?? 0;
     for (const f of list) {
       if (expr === 0) expr0.push({ ...f, slot });
-      else if (exprFrames[expr]) exprFrames[expr].push({ ...f, slot });
+      else if (exprFrames[expr]) {
+        const frame = { ...f, slot };
+        if (!exprFrames[expr].has(slot)) exprFrames[expr].set(slot, frame);
+        if (!exprFirst[expr]) exprFirst[expr] = frame;
+      }
     }
   }
   expr0.sort((a, b) => a.slot - b.slot);
   faceSeq = expr0;
-  statusEl.textContent = `素材库已加载: ${name}（${manifest.frames.length} 帧，嘴型序列 ${faceSeq.length} 帧）`;
+  midStart = Math.floor(faceSeq.length * 0.15);  // 中间段起始帧（接近闭嘴→微张），随库缓存
+  vowelMap = idx.vowelFrames;
+  vowelTracker.reset();
+  statusEl.textContent = `素材库已加载: ${name}（${manifest.frames.length} 帧，嘴型序列 ${faceSeq.length} 帧${vowelMap.size ? `，元音嘴型 ${[...vowelMap.keys()].join('/')} ` : ''}）`;
 }
 
 // 连续嘴型状态（"能量条波动直接驱动嘴"模式）
 let faceSeq = [];            // expr=0 帧按嘴档排序的连续序列
-let exprFrames = { 1: [], 2: [] }; // 表情档帧（F0 驱动切换）
+let exprFrames = { 1: new Map(), 2: new Map() }; // 表情档帧索引（slot → 帧，F0 驱动切换用）
+let exprFirst = { 1: null, 2: null };           // 表情档兜底帧
+let midStart = 0;            // faceSeq 中间段起始帧索引（loadLib 时算好）
 let levelAvg = 0;            // level 平滑（连续映射防毛刺）
 let lastSwitchLevel = -1;    // 上次切帧时的 levelAvg（最小变化阈值）
 let curMappedIdx = 0;        // 当前映射到的帧索引（节流时保持用）
@@ -221,6 +247,7 @@ let lvCount = 0;
 let levelVar = 0;                          // 兴奋度
 let frameCount = 0;
 let lastF0 = 0;                            // 上次测得的 F0（跨帧保持，供表情映射）
+let vowel = '';                            // 当前生效元音（''=无，清音/低置信时为空）
 
 function estimatePitch(samples, sampleRate) {
   const r = autocorrPitch(samples, sampleRate);
@@ -274,15 +301,34 @@ function frame(nowMs) {
   lvCount = Math.min(lvCount + 1, levelHist.length);
   if (frameCount % 30 === 0) recomputeLevelVar();
 
+  // 元音（每 2 帧同拍）：共振峰 F1/F2 → 元音分类 → 确认+保持平滑。
+  // 仅当库含元音关键帧时才计算（纯能量库零开销）；清音/低置信时 tracker 自然回落为 ''
+  if (vowelMap.size > 0) {
+    if (samples.length === 0) {
+      vowel = vowelTracker.step('', nowMs);       // 无音频输入：确认后清空元音
+    } else if (frameCount % 2 === 0) {
+      const spec = audio.getFreqData();
+      const fm = spec.length ? estimateFormants(spec, audio.getSampleRate()) : null;
+      const cls = fm ? classifyVowel(fm.f1, fm.f2) : { vowel: '' };
+      vowel = vowelTracker.step(cls.vowel, nowMs);
+      setDs('f1', fm ? fm.f1.toFixed(0) : '0');   // 供自动化测试/调试读取
+      setDs('f2', fm ? fm.f2.toFixed(0) : '0');
+    }
+    setDs('vowel', vowel || '-');
+  } else if (vowel !== '') {
+    vowel = '';
+    setDs('vowel', '-');
+  }
+
   const autoExpr = exprFromFeatures({ f0, f0Base, levelVar });
   const expr = autoExpr;   // 表情由 F0 自动驱动（素材含表情帧时生效）
   const r = stateMachine.step({ db, level, expr, nowMs });
   prevSilent = r.silent;
-  statusEl.dataset.f0 = f0.toFixed(0);          // 供自动化测试/调试读取
-  statusEl.dataset.f0base = f0Base.toFixed(0);
-  statusEl.dataset.expr = String(expr);
-  statusEl.dataset.level = level.toFixed(2);
-  statusEl.dataset.emax = eMax.toFixed(1);
+  setDs('f0', f0.toFixed(0));             // 供自动化测试/调试读取（仅变化时写 DOM）
+  setDs('f0base', f0Base.toFixed(0));
+  setDs('expr', String(expr));
+  setDs('level', level.toFixed(2));
+  setDs('emax', eMax.toFixed(1));
 
   // —— 嘴型：连续跟随能量波动 + 声音频率(1/3)辅助 ——
   // mouthDrive = 能量(2/3) + F0 归一化(1/3)：F0 变化比能量平滑，掺入后切换更稳（用户建议）
@@ -304,16 +350,15 @@ function frame(nowMs) {
     // 中间段 [energyLo, energyHi] 按区间映射到中间帧，能量落在哪个范围就显示哪张图
     const LO = params.energyLo;
     const HI = params.energyHi;
-    const MID_START = Math.floor(faceSeq.length * 0.15);  // 中间段起始帧（接近闭嘴→微张）
+    if (mouthDrive >= LO) belowLoSince = null;   // 能量达标：清掉低能量节流计时
     let mappedIdx = curMappedIdx;
     if (r.silent) {
       mappedIdx = 0;
     } else if (mouthDrive > HI) {
       mappedIdx = faceSeq.length - 1;                    // 封顶：最大张
     } else if (mouthDrive >= LO) {
-      belowLoSince = null;
       const t = (mouthDrive - LO) / Math.max(0.001, HI - LO);  // 0~1 区间
-      mappedIdx = Math.min(faceSeq.length - 1, MID_START + Math.round(t * (faceSeq.length - 1 - MID_START)));
+      mappedIdx = Math.min(faceSeq.length - 1, midStart + Math.round(t * (faceSeq.length - 1 - midStart)));
     } else {
       // 低于下限：节流——持续 eloHoldMs 才切闭嘴图；能量快速为 0 又回来时保持原图
       if (belowLoSince === null) belowLoSince = nowMs;
@@ -321,13 +366,17 @@ function frame(nowMs) {
     }
 
     let target = null;
-    if (expr === 0) {
+    const vList = vowel !== '' ? vowelMap.get(vowel) : null;
+    if (vList && vList.length > 0 && mouthDrive >= LO) {
+      // 元音嘴型优先：元音定形状、能量在元音组内定开合档；低于能量下限仍走闭嘴
+      const t2 = Math.min(1, (mouthDrive - LO) / Math.max(0.001, HI - LO));
+      target = vList[Math.min(vList.length - 1, Math.round(t2 * (vList.length - 1)))];
+    } else if (expr === 0) {
       target = faceSeq[mappedIdx];
     } else {
-      // 表情档（微笑/挑眉）：选该表情、嘴档接近当前驱动的帧
+      // 表情档（微笑/挑眉）：选该表情、嘴档接近当前驱动的帧（Map 预建索引，O(1)）
       const slot = Math.min(3, Math.round(mouthDrive * 3));
-      const ef = exprFrames[expr].find((f) => f.slot === slot) ?? exprFrames[expr][0];
-      target = ef;
+      target = exprFrames[expr].get(slot) ?? exprFirst[expr] ?? null;
     }
     // 切换节奏：换帧间隔滑块可调（默认 300ms，越大换得越慢）+ 最小变化 2%
     const switchCooldown = params.switchIntervalMs;
@@ -342,7 +391,7 @@ function frame(nowMs) {
       curFaceKey = target.id;
       composer.enter({ key: target.id, img: target.img, mode: 'fade' });
       // 状态栏只在档位/静音状态变化时更新（避免每帧闪烁文字）
-      const slotOf = Math.min(3, Math.floor(faceSeq.indexOf(target) / Math.max(1, faceSeq.length / 4)));
+      const slotOf = Math.min(3, Math.max(0, target.slot ?? 0));
       if (!isFirst && (slotOf !== lastStatusSlot || r.silent !== lastStatusSilent)) {
         lastStatusSlot = slotOf;
         lastStatusSilent = r.silent;
@@ -368,7 +417,7 @@ function frame(nowMs) {
 
   // —— 原始声音能量条（对比用：绿色填充随声音能量伸缩 + 4 档刻度）——
   {
-    const w = $('meterRaw').width;
+    const w = METER_RAW_W;
     const ctx = meterRawCtx;
     ctx.clearRect(0, 0, w, 44);
     ctx.fillStyle = '#333';
@@ -386,7 +435,7 @@ function frame(nowMs) {
   }
   // —— 嘴型映射能量条（下限/上限范围 + 当前指针：能量落在哪段嘴型就显示哪张）——
   {
-    const w = $('meterMapped').width;
+    const w = METER_MAPPED_W;
     const ctx = meterMappedCtx;
     const bw = w - 20;
     const y0 = 16;
@@ -496,7 +545,18 @@ const banner = (text, kind = '') => {
       return;
     }
     banner('✓ 页面脚本运行正常，正在加载素材库…', 'ok');
+    // 支持 ?lib=<库名> 直接指定素材库（可指定被下拉隐藏的测试库，调试/自动化用）
+    const urlLib = new URLSearchParams(location.search).get('lib');
+    if (urlLib) libName = urlLib;
     await populateLibSelect();
+    if (urlLib && libName !== urlLib) libName = urlLib;   // populateLibSelect 会把隐藏库重置为默认库，这里恢复 URL 指定
+    if (![...$('lib').options].some((o) => o.value === libName)) {
+      const opt = document.createElement('option');
+      opt.value = libName;
+      opt.textContent = libName;
+      $('lib').appendChild(opt);
+    }
+    $('lib').value = libName;
     await loadLib(libName);
     banner(`✓ 运行正常 · 素材库 ${libName}`, 'ok');
     requestAnimationFrame(frame);

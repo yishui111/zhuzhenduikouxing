@@ -1,10 +1,9 @@
 // 档位映射 + 防抖状态机（纯逻辑，Node 可测）
 // 设计要点（参考 CrazyTalk/Live2D/VTubeStudio 的防抖思路）：
-//   1. 滞回（hysteresis）：连续能量变化小于阈值不切换，防毛刺
-//   2. 确认（confirm）：目标档连续 N 帧稳定才切换，防单帧脉冲（爆破音 p/b/t）
-//   3. 保持（hold）：切换后新状态至少停留 holdMs，防嘴高频抖动
-//   4. 静音强制闭嘴：低于静音门限持续 silenceMs 后回 E0×中性
-//   5. 过渡片段优先：同表情档的嘴档变化优先播"过渡片段"，否则交叉淡化
+//   1. 确认（confirm）：目标档连续 N 帧稳定才切换，防单帧脉冲（爆破音 p/b/t）与小幅振荡
+//   2. 保持（hold）：切换后新状态至少停留 holdMs，防嘴高频抖动
+//   3. 静音强制闭嘴：低于静音门限持续 silenceMs 后回 E0×中性
+//   4. 过渡片段优先：同表情档的嘴档变化优先播"过渡片段"，否则交叉淡化
 
 export const SLOT_NAMES = ['E0', 'E1', 'E2', 'E3'];
 
@@ -23,7 +22,7 @@ export function slotFromLevel(level, slots = 4) {
  * 创建防抖状态机。
  * @param {object} opts
  * @param {number} opts.slots 嘴档数（默认 4）
- * @param {number} opts.hysteresis 滞回宽度（默认 0.15，连续 level 变化小于此值不切）
+   * @param {number} opts.hysteresis 已废弃（保留参数兼容旧调用，防抖实际由确认帧+保持期完成）
  * @param {number} opts.confirmFrames 确认帧数（默认 3）
  * @param {number} opts.holdMs 状态最小停留（默认 100）
  * @param {number} opts.silenceDb 静音门限 dB（默认 -50）
@@ -67,9 +66,6 @@ export function createStateMachine(opts = {}) {
         targetSlot = slotFromLevel(input.level, slots);
         targetExpr = input.expr ?? 0;
       }
-
-      const levelChanged = Math.abs(input.level - (s.lastLevel ?? input.level)) >= p.hysteresis;
-      s.lastLevel = input.level;
 
       // 确认计数
       if (targetSlot !== s.pendingSlot || targetExpr !== s.pendingExpr) {

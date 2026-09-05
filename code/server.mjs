@@ -3,10 +3,13 @@
 // 静态文件服务 code/ 目录；/api/lib/<库名>/<路径> 读写 avatar/libs/
 // 另导出 createAppServer() 供自测复用
 import { createServer } from 'node:http';
-import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
+import { readFile, mkdir, readdir, unlink } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { extname, join, normalize, sep, basename } from 'node:path';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { extname, join, normalize, sep, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const execFileP = promisify(execFile);
@@ -47,6 +50,32 @@ function safePath(base, rel) {
   return target;
 }
 
+/**
+ * 请求体流式写入目标文件（内存峰值 O(1)，不随文件大小增长）。
+ * 超过 maxBytes 抛 Error('too large')；失败时调用方负责清理半截文件。
+ * @returns {Promise<number>} 实际写入字节数
+ */
+async function drainTo(req, target, maxBytes) {
+  let total = 0;
+  const limit = new Transform({
+    transform(chunk, _enc, cb) {
+      total += chunk.length;
+      if (total > maxBytes) { cb(new Error('too large')); return; }
+      cb(null, chunk);
+    },
+  });
+  await pipeline(req, limit, createWriteStream(target));
+  return total;
+}
+
+/** 上传失败统一响应：too large → 413，其余 → 500（JSON），并清理半截文件 */
+async function uploadFail(res, target, err) {
+  if (target) await unlink(target).catch(() => { /* noop */ });
+  const tooLarge = err.message === 'too large';
+  res.writeHead(tooLarge ? 413 : 500, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(tooLarge ? { error: '文件过大' } : { error: '上传失败: ' + err.message }));
+}
+
 function handle(req, res, port) {
   // 本地开发/工具场景放开跨源（如浏览器自动化脚本从 about:blank 抓取素材）
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -57,16 +86,12 @@ function handle(req, res, port) {
   // —— 视频转码：POST /api/transcode（上传原始视频 → HEVC 等自动转 H.264 → 返回转码文件名）——
   if (req.method === 'POST' && url.pathname === '/api/transcode') {
     return (async () => {
-      const chunks = [];
-      let total = 0;
-      for await (const c of req) {
-        total += c.length;
-        if (total > 500 * 1024 * 1024) { res.writeHead(413); res.end('too large'); return; }
-        chunks.push(c);
-      }
       const base = `upload_${Date.now()}`;
       const srcPath = join(INPUT_DIR, base + '.mp4');
-      await writeFile(srcPath, Buffer.concat(chunks));
+      await mkdir(INPUT_DIR, { recursive: true });
+      await drainTo(req, srcPath, 500 * 1024 * 1024)
+        .catch((err) => uploadFail(res, srcPath, err));
+      if (res.writableEnded) return;
       // 探测视频编码
       const probe = await execFileP(FFPROBE_BIN, [
         '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', srcPath,
@@ -133,17 +158,11 @@ function handle(req, res, port) {
     const rel = url.pathname.slice(libPrefix.length);
     return (async () => {
       const target = safePath(LIBS_DIR, rel);
-      const chunks = [];
-      let total = 0;
-      for await (const c of req) {
-        total += c.length;
-        if (total > 100 * 1024 * 1024) { res.writeHead(413); res.end('too large'); return; }
-        chunks.push(c);
-      }
-      await mkdir(target.replace(/[^\\/]+$/, ''), { recursive: true });
-      await writeFile(target, Buffer.concat(chunks));
+      await mkdir(dirname(target), { recursive: true });
+      await drainTo(req, target, 100 * 1024 * 1024).catch((err) => uploadFail(res, target, err));
+      if (res.writableEnded) return;
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, path: rel, bytes: total }));
+      res.end(JSON.stringify({ ok: true, path: rel }));
     })().catch((err) => sendError(res, err));
   }
 

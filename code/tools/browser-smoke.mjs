@@ -81,11 +81,25 @@ async function main() {
   const sawClosed = mouthStatuses.some((t) => /E0/.test(t)); // E0 档 = 闭嘴（静音时出现）
   console.log('安静音频: 最大level=' + maxLevel.toFixed(2), '| 出现张嘴档位(E1~E3):', sawOpenSlot, '| 出现闭嘴档(E0):', sawClosed);
 
-  // —— 阶段 3：切换到另一套测试素材库（lib_test2），验证多库切换 ——
-  await page.selectOption('#lib', 'lib_test2');
-  await page.waitForFunction(() => document.getElementById('status').textContent.includes('lib_test2'), { timeout: 8000 });
-  const statusAfterSwitch = await page.textContent('#status');
-  console.log('切换后状态:', statusAfterSwitch);
+  // —— 阶段 3：切换到另一套素材库，验证多库切换 ——
+  // （主页面会隐藏 lib_test* 测试库，这里从下拉实际选项里动态挑另一个）
+  const otherLib = await page.evaluate(() => {
+    const sel = document.getElementById('lib');
+    return [...sel.options].map((o) => o.value).find((v) => v && v !== sel.value) || null;
+  });
+  if (!otherLib) {
+    console.log('切换后状态: 下拉只有一套素材库，跳过切换验证');
+  } else {
+    await page.selectOption('#lib', otherLib);
+    await page.waitForFunction(
+      (n) => document.getElementById('status').textContent.includes(n),
+      otherLib,
+      { timeout: 8000 }
+    );
+    const statusAfterSwitch = await page.textContent('#status');
+    console.log('切换后状态:', statusAfterSwitch);
+  }
+  const switchOk = otherLib === null || (await page.textContent('#status')).includes(otherLib);
 
   // —— 阶段 4：录屏导出（真实下载 webm 并校验）——
   await page.setInputFiles('#file', wav); // 重新播放，让合成流带音频轨
@@ -103,6 +117,20 @@ async function main() {
   const isWebm = magic === '1a45dfa3'; // EBML 魔数
   console.log('导出文件:', name, '| 大小:', size, '字节 | EBML魔数:', magic, isWebm ? '✓' : '✗');
 
+  // —— 阶段 4b：元音口型驱动（共振峰 → a/e/i/o/u 嘴形）——
+  const vowelWav = fileURLToPath(new URL('../../input/test/test_vowel.wav', import.meta.url));
+  await page.goto(`${BASE}/web/index.html?lib=lib_test_vowel`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+  await page.waitForTimeout(2000);   // 等元音素材库加载
+  await page.setInputFiles('#file', vowelWav);
+  const vowelSeen = new Set();
+  for (let i = 0; i < 22; i++) {
+    await page.waitForTimeout(400);  // 覆盖 7.5s 音频（五段元音）
+    const v = await page.evaluate(() => document.getElementById('status').dataset.vowel || '-');
+    if (v && v !== '-') vowelSeen.add(v);
+  }
+  const vowelOk = vowelSeen.size >= 2;
+  console.log('元音驱动: 检出元音 =', [...vowelSeen].sort().join('/') || '无', vowelOk ? '✓' : '✗（应至少检出 2 种）');
+
   // —— 阶段 5：建库工具页面启动 ——
   const preprocessErrors = [];
   page.removeAllListeners('pageerror');
@@ -116,8 +144,9 @@ async function main() {
   const ok = status.includes('素材库已加载') && canvasInfo.nonBg > 100 && libCount >= 1
     && sawSlot && maxF0 > 100 && sawBrow
     && maxLevel > 0.3 && sawOpenSlot && sawClosed
-    && statusAfterSwitch.includes('lib_test2')
+    && switchOk
     && size > 1000 && isWebm
+    && vowelOk
     && errors.length === 0 && preprocessErrors.length === 0;
 
   await browser.close();

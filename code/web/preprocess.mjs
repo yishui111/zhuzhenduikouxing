@@ -1,7 +1,7 @@
 // 建库工具（一键生成嘴型图库）：
 // 上传说话视频 → 采集能量 → 按"嘴巴张开弧度"（能量分位近似）抽帧（闭嘴→微张→大张梯度）
 // → cover 抽帧 + 背景帧 → 生成 manifest → 上传到 avatar/libs/<库名>/，主页面用能量范围控制
-import { rms, rmsDb } from '../core/features.mjs';
+import { rms, rmsDb, frameDbSequence } from '../core/features.mjs';
 
 const $ = (id) => document.getElementById(id);
 const video = $('videoEl');
@@ -61,8 +61,34 @@ function setProgress(pct) {
 $('p_cnt').addEventListener('input', () => { $('p_cnt_val').textContent = $('p_cnt').value + ' 帧'; });
 $('p_cnt_val').textContent = $('p_cnt').value + ' 帧';
 
-// —— 2. 能量采集（2x 播放，逐帧 RMS）——
-function collectEnergy() {
+// —— 2. 能量采集 ——
+// 首选：decodeAudioData 离线解出整段音轨 PCM → 逐帧 RMS（瞬时完成、10ms 均匀采样，
+// 不受播放帧率/静音状态影响）；音轨编码解不了时回落到 captureStream + 2x 播放采样。
+async function collectEnergy() {
+  let buf;
+  try {
+    buf = await (await fetch(video.src)).arrayBuffer();
+  } catch {
+    return collectEnergyPlayback();   // blob 源读不出来 → 旧路径兜底
+  }
+  const actx = new (window.AudioContext || window.webkitAudioContext)();
+  try {
+    const audioBuf = await actx.decodeAudioData(buf);
+    if (audioBuf.duration < 0.1) throw new Error('视频没有音轨（请确认录像带声音）');
+    return frameDbSequence(audioBuf.getChannelData(0), audioBuf.sampleRate);
+  } catch (err) {
+    if (err.name === 'EncodingError') {
+      log('   （音轨编码无法离线解码，改用播放采样）');
+      return collectEnergyPlayback();
+    }
+    throw err;
+  } finally {
+    try { actx.close(); } catch { /* noop */ }
+  }
+}
+
+// 回落方案：captureStream + 2x 播放，逐 rAF 采样 RMS（采样密度受帧率限制，仅兜底用）
+function collectEnergyPlayback() {
   return new Promise((resolve, reject) => {
     const stream = video.captureStream();
     const audioTracks = stream.getAudioTracks();
@@ -116,19 +142,26 @@ function pickFrameTimes(times, db, framesPerSlot, slots = 4) {
 }
 
 // —— 4. cover 抽帧（等比铺满、居中裁剪，无黑边不变形）——
+// 输出 JPEG Blob（toBlob 硬件编码直出，避免 toDataURL 的 base64 字符串双份内存）
+const grabCanvas = document.createElement('canvas');
+grabCanvas.width = 512; grabCanvas.height = 512;
 function grabFrame(time) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const onSeek = () => {
-      const c = document.createElement('canvas');
-      c.width = 512; c.height = 512;
-      const ctx = c.getContext('2d');
+      const ctx = grabCanvas.getContext('2d');
       const vw = video.videoWidth || 720;
       const vh = video.videoHeight || 1280;
       const sc = Math.max(512 / vw, 512 / vh);
       ctx.drawImage(video, (512 - vw * sc) / 2, (512 - vh * sc) / 2, vw * sc, vh * sc);
-      const data = c.toDataURL('image/jpeg', 0.85).split(',')[1];
-      video.removeEventListener('seeked', onSeek);
-      resolve(data);
+      grabCanvas.toBlob(
+        (blob) => {
+          video.removeEventListener('seeked', onSeek);
+          if (blob) resolve(blob);
+          else reject(new Error('抽帧编码失败'));
+        },
+        'image/jpeg',
+        0.85
+      );
     };
     video.addEventListener('seeked', onSeek);
     video.currentTime = Math.max(0, Math.min(video.duration - 0.05, time));
@@ -136,8 +169,8 @@ function grabFrame(time) {
 }
 
 // —— 5. 一键生成 ——
-async function postFile(name, rel, b64) {
-  const r = await fetch(`/api/lib/${name}/${rel}`, { method: 'POST', body: Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0)) });
+async function postFile(name, rel, body) {
+  const r = await fetch(`/api/lib/${name}/${rel}`, { method: 'POST', body });
   if (!r.ok) throw new Error(`上传失败 ${rel}: ${r.status}`);
 }
 
@@ -158,7 +191,7 @@ $('generate').addEventListener('click', async () => {
       btn.disabled = false;
       return;
     }
-    log('① 采集能量（2x 播放分析声音…）');
+    log('① 采集能量（离线解码音轨…）');
     setProgress(5);
     const { db, times } = await collectEnergy();
     log(`   完成：${db.length} 帧，时长 ${(times[times.length - 1] || 0).toFixed(1)}s`);
@@ -169,8 +202,8 @@ $('generate').addEventListener('click', async () => {
     const picks = pickFrameTimes(times, db, framesPerSlot);
     const frames = [];
     for (let i = 0; i < picks.length; i++) {
-      const data = await grabFrame(picks[i].t);
-      frames.push({ slot: picks[i].slot, data });
+      const blob = await grabFrame(picks[i].t);
+      frames.push({ slot: picks[i].slot, blob });
       setProgress(5 + ((i + 1) / picks.length) * 55);
       if ((i + 1) % 8 === 0 || i === picks.length - 1) log(`   帧 ${i + 1}/${picks.length}`);
     }
@@ -201,7 +234,7 @@ $('generate').addEventListener('click', async () => {
       frames: manifestFrames,
       clips: [],
     };
-    await postFile(name, 'manifest.json', btoa(unescape(encodeURIComponent(JSON.stringify(manifest, null, 2)))));
+    await postFile(name, 'manifest.json', new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' }));
     setProgress(100);
     log(`✅ 生成完成：avatar/libs/${name}/（${manifestFrames.length} 帧 + 背景图）`);
     log('下一步：去主页面，素材库下拉选 ' + name + '，用"能量 → 图片"配置控制嘴型。');
@@ -218,7 +251,7 @@ $('generate').addEventListener('click', async () => {
       const grid = row.querySelector('.preview-grid');
       frames.filter((f) => f.slot === s).forEach((f) => {
         const img = document.createElement('img');
-        img.src = 'data:image/jpeg;base64,' + f.data;
+        img.src = URL.createObjectURL(f.blob);
         img.title = `档${s}`;
         grid.appendChild(img);
       });

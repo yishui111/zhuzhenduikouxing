@@ -90,6 +90,44 @@ function drawFace(slot, expr, pal) {
   return rgba;
 }
 
+/** 画元音嘴形：vowel 决定形状（A/E/I/O/U 口型），open 0~1 决定开合大小 */
+function drawVowelFace(vowel, open, pal) {
+  // 先画一张与 drawFace 同底的脸（中性眉 + 无嘴），再叠元音嘴形
+  const rgba = drawFaceSilent(pal);
+  const s = 0.55 + 0.45 * Math.max(0, Math.min(1, open));   // 开合缩放
+  const my = 178;
+  const shapes = {
+    a: { rx: 17, ry: 26 },   // 大开竖圆嘴
+    e: { rx: 32, ry: 11 },   // 宽扁咧嘴
+    i: { rx: 24, ry: 7 },    // 窄扁长嘴
+    o: { rx: 15, ry: 18 },   // 圆嘴
+    u: { rx: 9, ry: 11 },    // 撅小圆嘴
+  };
+  const sp = shapes[vowel] ?? shapes.a;
+  fillEllipse(rgba, 128, my - (sp.ry * s) / 2, sp.rx * s, sp.ry * s, ...pal.mouth);
+  // 牙齿/口腔高光，让嘴形更可辨
+  fillEllipse(rgba, 128, my - (sp.ry * s) / 2 + 2, (sp.rx * s) * 0.55, Math.max(1.5, (sp.ry * s) * 0.22), 245, 240, 235);
+  return rgba;
+}
+
+/** 与 drawFace 同底但不含嘴（中性眉、眼睛、头发） */
+function drawFaceSilent(pal) {
+  const rgba = new Uint8Array(W * H * 4);
+  fillRect(rgba, 0, 0, W - 1, H - 1, ...pal.bg);
+  fillEllipse(rgba, 128, 92, 96, 88, ...pal.hair);
+  fillEllipse(rgba, 128, 134, 82, 94, ...pal.skin);
+  fillEllipse(rgba, 46, 140, 10, 18, ...pal.ear);
+  fillEllipse(rgba, 210, 140, 10, 18, ...pal.ear);
+  fillEllipse(rgba, 102, 120, 8, 9, 250, 250, 252);
+  fillEllipse(rgba, 154, 120, 8, 9, 250, 250, 252);
+  fillEllipse(rgba, 102, 121, 4, 5, ...pal.eye);
+  fillEllipse(rgba, 154, 121, 4, 5, ...pal.eye);
+  line(rgba, 88, 104, 116, 104, 4, ...pal.brow);
+  line(rgba, 140, 104, 168, 104, 4, ...pal.brow);
+  line(rgba, 128, 130, 128, 142, 3, ...pal.skinShade);
+  return rgba;
+}
+
 function writePng(libDir, relPath, rgba) {
   const buf = encodePNG(W, H, rgba);
   const full = join(libDir, relPath);
@@ -136,6 +174,41 @@ function buildLib(name, pal, note) {
   return { frames: frames.length, clips: manifest.clips.length };
 }
 
+// —— 元音测试库：a/e/i/o/u 各 2 档（slot1 微张 / slot3 大张）+ 中性开合序列 + 背景 ——
+function buildVowelLib(name, pal, note) {
+  const libDir = join(LIBS, name);
+  mkdirSync(libDir, { recursive: true });
+  const frames = [];
+  // 中性口型序列（闭嘴→大张）：能量驱动沿用，元音未命中时回落用
+  for (let slot = 0; slot <= 3; slot++) {
+    const id = `N${slot}`;
+    writePng(libDir, `frames/${id}.png`, drawFace(slot, 0, pal));
+    frames.push({ id, file: `frames/${id}.png`, slot, expr: 0 });
+  }
+  // 元音关键帧：vowel 定形状，slot 定开合档
+  for (const v of ['a', 'e', 'i', 'o', 'u']) {
+    for (const [slot, open] of [[1, 0.35], [3, 1.0]]) {
+      const id = `V_${v}_${slot}`;
+      writePng(libDir, `frames/${id}.png`, drawVowelFace(v, open, pal));
+      frames.push({ id, file: `frames/${id}.png`, slot, expr: 0, vowel: v });
+    }
+  }
+  const manifest = {
+    meta: {
+      name,
+      person: '测试占位（合成卡通脸·元音口型）',
+      created: new Date().toISOString().slice(0, 10),
+      note,
+      frameMs: 33,
+    },
+    background: null,
+    frames,
+    clips: [],
+  };
+  writeFileSync(join(libDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  return { frames: frames.length, vowels: 5 };
+}
+
 // —— 音频合成 ——
 function makeNoise(seconds, sampleRate, amp, modHz = 0) {
   const n = Math.round(seconds * sampleRate);
@@ -160,6 +233,28 @@ function makeTone(seconds, sampleRate, freq, amp, fadeMs = 10) {
   }
   return out;
 }
+
+/** 双正弦（双共振峰结构，近似元音声学特征） */
+function makeTone2(seconds, sampleRate, f1, f2, amp1 = 0.3, amp2 = 0.2, fadeMs = 10) {
+  const n = Math.round(seconds * sampleRate);
+  const out = new Float32Array(n);
+  const fade = Math.round((fadeMs / 1000) * sampleRate);
+  for (let i = 0; i < n; i++) {
+    const env = i < fade ? i / fade : i > n - fade ? (n - i) / fade : 1;
+    const tsec = i / sampleRate;
+    out[i] = (Math.sin(2 * Math.PI * f1 * tsec) * amp1 + Math.sin(2 * Math.PI * f2 * tsec) * amp2) * env;
+  }
+  return out;
+}
+
+// 与 core/formants.mjs 的 VOWEL_REFS 保持一致（元音测试音的 F1/F2）
+const VOWEL_FORMANTS = {
+  a: [850, 1250],
+  e: [500, 1800],
+  i: [300, 2300],
+  o: [500, 850],
+  u: [320, 800],
+};
 
 function concat(parts) {
   const total = parts.reduce((s, p) => s + p.length, 0);
@@ -202,13 +297,25 @@ const pitch = concat([
 ]);
 writeFileSync(join(INPUT, 'test_pitch.wav'), encodeWAV(pitch, SR));
 
+// 元音测试音：五段双共振峰音（F1+F2 主导，近似元音声学结构），段序 a,e,i,o,u，各 1s + 0.5s 静音
+const vowelWavParts = [];
+for (const v of ['a', 'e', 'i', 'o', 'u']) {
+  const [f1, f2] = VOWEL_FORMANTS[v];
+  vowelWavParts.push(makeTone2(1.0, SR, f1, f2));
+  vowelWavParts.push(new Float32Array(t(0.5)));
+}
+writeFileSync(join(INPUT, 'test_vowel.wav'), encodeWAV(concat(vowelWavParts), SR));
+
 // —— 生成两套测试库 ——
 const r1 = buildLib('lib_test', PALETTES.default, '合成测试素材 A（默认配色），非真人录像；用于驱动引擎自测与浏览器演示。');
 const r2 = buildLib('lib_test2', PALETTES.green, '合成测试素材 B（变体配色），验证多库切换；非真人录像。');
+const r3 = buildVowelLib('lib_test_vowel', PALETTES.default, '元音口型测试库（合成）：a/e/i/o/u 各 2 档嘴形 + 中性开合序列；配合 test_vowel.wav 验证元音驱动。');
 
 console.log('已生成测试素材：');
 console.log(`  avatar/libs/lib_test/  （${r1.frames} 帧 + ${r1.clips} 片段）`);
 console.log(`  avatar/libs/lib_test2/ （${r2.frames} 帧 + ${r2.clips} 片段）`);
+console.log(`  avatar/libs/lib_test_vowel/ （${r3.frames} 帧，元音库 ${r3.vowels} 种嘴形）`);
 console.log(`  ${join(INPUT, 'test_mouth.wav')}（${(mouth.length / SR).toFixed(1)}s）`);
 console.log(`  ${join(INPUT, 'test_markers.wav')}（${(markers.length / SR).toFixed(1)}s）`);
 console.log(`  ${join(INPUT, 'test_pitch.wav')}（${(pitch.length / SR).toFixed(1)}s）`);
+console.log(`  ${join(INPUT, 'test_vowel.wav')}（元音五段）`);

@@ -20,14 +20,27 @@ export function autocorrPitch(samples, sampleRate, { f0Min = 70, f0Max = 400, co
   let e0 = 0;
   for (let i = 0; i < n; i++) e0 += samples[i] * samples[i];
   if (e0 < 1e-9) return { f0: 0, confidence: 0, voiced: false };
-  let bestLag = 0;
-  let bestCorr = 0;
-  for (let lag = lagMin; lag <= lagMax; lag++) {
+  const corrAt = (lag) => {
     let c = 0;
     for (let i = 0; i < n - lag; i++) c += samples[i] * samples[i + lag];
-    const corr = c / e0;
-    if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
+    return c / e0;
+  };
+  // 两阶段搜索：先按步长粗扫定位峰区，再在峰区邻域逐点细化。
+  // 峰宽（≥半个周期）远大于步长，不会漏峰；乘加量约降 COARSE 倍（实时主循环省 CPU）
+  const COARSE = 4;
+  let bestLag = lagMin;
+  let bestCorr = -1;
+  for (let lag = lagMin; lag <= lagMax; lag += COARSE) {
+    const c = corrAt(lag);
+    if (c > bestCorr) { bestCorr = c; bestLag = lag; }
   }
+  const from = Math.max(lagMin, bestLag - COARSE + 1);
+  const to = Math.min(lagMax, bestLag + COARSE - 1);
+  for (let lag = from; lag <= to; lag++) {
+    const c = corrAt(lag);
+    if (c > bestCorr) { bestCorr = c; bestLag = lag; }
+  }
+  bestCorr = Math.max(0, bestCorr);
   const voiced = bestCorr >= confidenceTh;
   return { f0: voiced ? sampleRate / bestLag : 0, confidence: bestCorr, voiced };
 }
