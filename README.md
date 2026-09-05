@@ -30,7 +30,7 @@
 - **网页版优先、零安装**：浏览器即用；Node.js 只用于本地静态服务器与自测
 - **自研、自包含、可自测**：特征提取 → 档位映射 → 平滑状态机为独立 JS 模块，`npm test` 一键回归
 
-> 📄 两条技术路线与决策过程见 [`docs/方案-真人关键帧表情合成.md`](docs/方案-真人关键帧表情合成.md)（主方案 B）、[`docs/方案-轻量3D表情数字人.md`](docs/方案-轻量3D表情数字人.md)（备选方案 A）、[`docs/方案分析.md`](docs/方案分析.md)（决策分析）。
+> 📄 主方案设计（建库流程 / 驱动引擎 / 元音口型）见 [`docs/方案-真人关键帧表情合成.md`](docs/方案-真人关键帧表情合成.md)。
 
 ## 🎯 主要功能
 
@@ -52,21 +52,19 @@ zhuzhenduikouxing/
 ├── DEPLOY.md               # 新机器部署方案（照做即可复原）
 ├── AGENTS.md               # 项目级约定（给 AI 编程助手 / 协作者）
 ├── 录制指南.md               # 录一段好素材的简单要求（照着做就行）
-├── start.bat / stop.bat    # Windows 一键启停（默认端口 48620）
-├── docs/                   # 设计文档（脱敏后保留）
-│   ├── 方案-真人关键帧表情合成.md  # 方案 B（主）设计
-│   ├── 方案-轻量3D表情数字人.md    # 方案 A（备选，3D blendshape）
-│   └── 方案分析.md                # 决策分析记录
+├── start.bat / stop.bat    # Windows 一键启停（默认端口 48625）
+├── docs/                   # 设计文档
+│   └── 方案-真人关键帧表情合成.md  # 主方案设计（建库 + 驱动引擎 + 元音口型）
 └── code/                   # 全部源代码（Node ≥20）
     ├── server.mjs          # 本地静态服务器 + 素材库读写 API + /api/transcode 转码
-    ├── core/               # 纯逻辑模块（能量/F0 特征、档位映射、状态机等，Node 可测）
+    ├── core/               # 纯逻辑模块（能量/F0/元音共振峰特征、档位映射、状态机等，Node 可测）
     ├── web/                # 主页面 index.html + 建库工具 preprocess.html
     ├── tools/              # 测试素材生成 / 浏览器冒烟 / 端到端等开发工具
     └── test/               # node --test 自测
 ```
 
 > 💡 本仓库只包含**源代码 / 脚本 / 配置 / 文档**。
-> `avatar/`（真人关键帧素材库、第三方 3D 备查模型）与 `input/`（本地录像/测试音频）属于**素材与运行时产物，不随仓库分发**——克隆后由脚本或你自己的录制自动生成，见下方「大件资源下载」与 DEPLOY.md。
+> `avatar/libs/`（你的真人关键帧素材库）与 `input/`（本地录像/测试音频）属于**素材与运行时产物，不随仓库分发**——克隆后由脚本或你自己的录制自动生成，见下方「大件资源下载」与 DEPLOY.md。
 
 ## 🚀 快速开始（拉到新电脑即可部署）
 
@@ -100,13 +98,13 @@ start.bat
 
 ### 4. 验证
 
-打开浏览器访问 http://127.0.0.1:48620/web/index.html，看到界面即部署成功。
+打开浏览器访问 http://127.0.0.1:48625/web/index.html，看到界面即部署成功。
 主页面上「素材库」下拉选 `lib_test` → 选择音频文件 `input/test/test_mouth.wav` 播放 → 观察画面随声音能量切换嘴型档位。
 
 | 页面 | 地址 | 用途 |
 |------|------|------|
-| **主页面** | http://127.0.0.1:48620/web/index.html | 加载素材库 + 播放音频/麦克风 → 实时关键帧拼接 |
-| **建库工具** | http://127.0.0.1:48620/web/preprocess.html | 上传说话视频 → 一键生成嘴型图库 |
+| **主页面** | http://127.0.0.1:48625/web/index.html | 加载素材库 + 播放音频/麦克风 → 实时关键帧拼接 |
+| **建库工具** | http://127.0.0.1:48625/web/preprocess.html | 上传说话视频 → 一键生成嘴型图库 |
 
 ### 5. 生成你自己的真人素材库（三步）
 
@@ -120,7 +118,6 @@ start.bat
 | ---- | ---- | ---- |
 | 真人关键帧素材库 `avatar/libs/<库名>/` | 演示与正式使用的「嘴型素材」（含本人画面，属于个人素材） | 不随仓库分发：按 [`录制指南.md`](录制指南.md) 自录后用建库工具一键生成 |
 | 合成测试素材（`avatar/libs/lib_test*` + `input/test/*.wav`） | 跑自测 / 首次体验 | 无需下载：`cd code && npm run make-test-assets` 自动生成（卡通脸，非真人） |
-| 3D 备查模型 `avatar/models/`（`.vrm` / `.glb`，方案 A 备用，代码未引用） | 方案 A（3D blendshape）开发期参考 | 第三方资源，不随仓库分发：如 Three.js 官方示例 `LeePerrySmith.glb`（github.com/mrdoob/three.js → examples/models）、Ready Player Me（readyplayer.me）、VRoid Hub（hub.vroid.com）等 |
 | ffmpeg（系统工具，非仓库文件） | HEVC/H.265 视频自动转 H.264（`/api/transcode`） | Windows：`winget install Gyan.FFmpeg`；或官网 ffmpeg.org 下载并加入 PATH |
 
 ## 🛠️ 测试（自测与回归）

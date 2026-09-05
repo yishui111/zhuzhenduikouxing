@@ -142,9 +142,23 @@ function pickFrameTimes(times, db, framesPerSlot, slots = 4) {
 }
 
 // —— 4. cover 抽帧（等比铺满、居中裁剪，无黑边不变形）——
-// 输出 JPEG Blob（toBlob 硬件编码直出，避免 toDataURL 的 base64 字符串双份内存）
+// 输出 JPEG Blob。优先 toBlob（硬件编码直出）；个别内嵌浏览器 toBlob 会产出
+// 0 字节 blob（实测），此时自动回落 toDataURL（base64 解码，兼容性最好）。
 const grabCanvas = document.createElement('canvas');
 grabCanvas.width = 512; grabCanvas.height = 512;
+function canvasToJpegBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob && blob.size > 0) { resolve(blob); return; }
+      try {
+        const data = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+        if (!data) { reject(new Error('抽帧编码失败（画布为空）')); return; }
+        const bin = atob(data);
+        resolve(new Blob([Uint8Array.from(bin, (ch) => ch.charCodeAt(0))], { type: 'image/jpeg' }));
+      } catch (err) { reject(err); }
+    }, 'image/jpeg', 0.85);
+  });
+}
 function grabFrame(time) {
   return new Promise((resolve, reject) => {
     const onSeek = () => {
@@ -153,15 +167,9 @@ function grabFrame(time) {
       const vh = video.videoHeight || 1280;
       const sc = Math.max(512 / vw, 512 / vh);
       ctx.drawImage(video, (512 - vw * sc) / 2, (512 - vh * sc) / 2, vw * sc, vh * sc);
-      grabCanvas.toBlob(
-        (blob) => {
-          video.removeEventListener('seeked', onSeek);
-          if (blob) resolve(blob);
-          else reject(new Error('抽帧编码失败'));
-        },
-        'image/jpeg',
-        0.85
-      );
+      canvasToJpegBlob(grabCanvas)
+        .then((blob) => { video.removeEventListener('seeked', onSeek); resolve(blob); })
+        .catch((err) => { video.removeEventListener('seeked', onSeek); reject(err); });
     };
     video.addEventListener('seeked', onSeek);
     video.currentTime = Math.max(0, Math.min(video.duration - 0.05, time));
@@ -170,6 +178,7 @@ function grabFrame(time) {
 
 // —— 5. 一键生成 ——
 async function postFile(name, rel, body) {
+  if (!body || body.size === 0) throw new Error(`空文件被拦截: ${rel}（浏览器编码异常或代码缺陷）`);
   const r = await fetch(`/api/lib/${name}/${rel}`, { method: 'POST', body });
   if (!r.ok) throw new Error(`上传失败 ${rel}: ${r.status}`);
 }
@@ -217,7 +226,7 @@ $('generate').addEventListener('click', async () => {
     for (let i = 0; i < frames.length; i++) {
       const id = `E${frames[i].slot}_x0_${i}`;
       const rel = `frames/${id}.jpg`;
-      await postFile(name, rel, frames[i].data);
+      await postFile(name, rel, frames[i].blob);
       manifestFrames.push({ id, file: rel, slot: frames[i].slot, expr: 0 });
       setProgress(65 + ((i + 1) / frames.length) * 30);
     }

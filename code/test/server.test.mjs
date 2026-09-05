@@ -83,7 +83,7 @@ test('素材库列表 /api/libs 返回库名数组', async () => {
 });
 
 test('测试素材 /api/input 只读可达，越界被拒', async () => {
-  const wav = await fetch(`${base}/api/input/test/test_markers.wav`);
+  const wav = await fetch(`${base}/api/input/test/test_mouth.wav`);
   assert.equal(wav.status, 200);
   const buf = new Uint8Array(await wav.arrayBuffer());
   assert.equal(String.fromCharCode(buf[0], buf[1], buf[2], buf[3]), 'RIFF', 'WAV 签名正确');

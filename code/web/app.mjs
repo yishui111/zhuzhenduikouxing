@@ -302,17 +302,19 @@ function frame(nowMs) {
   if (frameCount % 30 === 0) recomputeLevelVar();
 
   // 元音（每 2 帧同拍）：共振峰 F1/F2 → 元音分类 → 确认+保持平滑。
-  // 仅当库含元音关键帧时才计算（纯能量库零开销）；清音/低置信时 tracker 自然回落为 ''
+  // 仅当库含元音关键帧时才计算（纯能量库零开销）；静音帧强制判空——
+  // 编码底噪会在 F1/F2 频带形成假峰（实测被误判成 u），静音期不得出元音
   if (vowelMap.size > 0) {
     if (samples.length === 0) {
       vowel = vowelTracker.step('', nowMs);       // 无音频输入：确认后清空元音
     } else if (frameCount % 2 === 0) {
       const spec = audio.getFreqData();
       const fm = spec.length ? estimateFormants(spec, audio.getSampleRate()) : null;
-      const cls = fm ? classifyVowel(fm.f1, fm.f2) : { vowel: '' };
+      const audible = db > stateMachine.params.silenceDb + 2;   // 高于静音门限 2dB 余量
+      const cls = fm && audible ? classifyVowel(fm.f1, fm.f2) : { vowel: '' };
       vowel = vowelTracker.step(cls.vowel, nowMs);
-      setDs('f1', fm ? fm.f1.toFixed(0) : '0');   // 供自动化测试/调试读取
-      setDs('f2', fm ? fm.f2.toFixed(0) : '0');
+      setDs('f1', fm && audible ? fm.f1.toFixed(0) : '0');      // 供自动化测试/调试读取
+      setDs('f2', fm && audible ? fm.f2.toFixed(0) : '0');
     }
     setDs('vowel', vowel || '-');
   } else if (vowel !== '') {
@@ -414,6 +416,7 @@ function frame(nowMs) {
     dy: (level - 0.5) * 2 + Math.sin(tSec * 2 * Math.PI * 0.6) * 1.8 * talking,
   };
   renderer.draw(layers, motion);
+  if (recorder && recVideoTrack && recVideoTrack.requestFrame) recVideoTrack.requestFrame();
 
   // —— 原始声音能量条（对比用：绿色填充随声音能量伸缩 + 4 档刻度）——
   {
@@ -499,10 +502,12 @@ $('stop').addEventListener('click', () => { audio.stopAll(); statusEl.textConten
 
 // —— 录制导出（单 MediaRecorder：canvas 视频轨 + 音频流合成）——
 let recorder = null;
+let recVideoTrack = null;      // canvas 视频轨：主循环每帧 requestFrame 推帧（后台标签/无合成器环境也能稳定出帧）
 const chunks = [];
 $('rec').addEventListener('click', async () => {
   if (recorder) return;
-  const canvasStream = stage.captureStream(30);
+  const canvasStream = stage.captureStream();
+  recVideoTrack = canvasStream.getVideoTracks()[0] ?? null;
   const audioStream = audio.getRecordStream();
   const tracks = [...canvasStream.getVideoTracks()];
   if (audioStream) tracks.push(...audioStream.getAudioTracks());
@@ -520,6 +525,7 @@ $('rec').addEventListener('click', async () => {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
     recorder = null;
+    recVideoTrack = null;
     $('rec').disabled = false;
     $('recStop').disabled = true;
     statusEl.textContent = '已导出视频（webm）';
@@ -539,7 +545,7 @@ const banner = (text, kind = '') => {
   try {
     // 防呆：必须通过服务器访问（双击打开 file:// 无法加载素材库，会黑屏）
     if (location.protocol !== 'http:' && location.protocol !== 'https:') {
-      const msg = '⚠️ 请通过 http://127.0.0.1:48620 访问（先运行 start.bat），不要直接双击打开文件';
+      const msg = '⚠️ 请通过 http://127.0.0.1:48625 访问（先运行 start.bat），不要直接双击打开文件';
       statusEl.textContent = msg;
       banner(msg, 'bad');
       return;

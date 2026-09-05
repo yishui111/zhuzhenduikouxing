@@ -12,7 +12,7 @@ if (!EXE) {
   process.exit(0);
 }
 const VIDEO = fileURLToPath(new URL('../../input/test/test_video.webm', import.meta.url));
-const BASE = 'http://127.0.0.1:' + (process.env.PORT || 48620);
+const BASE = 'http://127.0.0.1:' + (process.env.PORT || 48625);
 const LIB = 'lib_e2e';
 
 const browser = await chromium.launch({ executablePath: EXE, headless: true });
@@ -42,9 +42,11 @@ const manifest = await (await fetch(`${BASE}/api/lib/${LIB}/manifest.json`)).jso
 console.log(`manifest: ${manifest.frames.length} 帧 + 背景 ${manifest.background}`);
 const slotCounts = [0, 1, 2, 3].map((s) => manifest.frames.filter((f) => f.slot === s).length);
 console.log('各嘴档帧数 E0~E3:', slotCounts.join('/'));
-const frameOk = await fetch(`${BASE}/api/lib/${LIB}/${manifest.frames[0].file}`).then((r) => r.status);
-const bgOk = await fetch(`${BASE}/api/lib/${LIB}/${manifest.background}`).then((r) => r.status);
-console.log(`首帧可读: ${frameOk} | 背景可读: ${bgOk}`);
+// 帧必须非空（0 字节 = 浏览器抽帧编码异常，曾因只查状态码漏过）
+const frameSize = await fetch(`${BASE}/api/lib/${LIB}/${manifest.frames[0].file}`).then((r) => r.arrayBuffer()).then((b) => b.byteLength);
+const frameOk = frameSize > 1000;
+const bgOk = await fetch(`${BASE}/api/lib/${LIB}/${manifest.background}`).then((r) => r.arrayBuffer()).then((b) => b.byteLength > 1000);
+console.log(`首帧可读: ${frameOk}（${frameSize}B） | 背景可读: ${bgOk}`);
 
 // 4) 清理
 await rm(fileURLToPath(new URL(`../../avatar/libs/${LIB}`, import.meta.url)), { recursive: true, force: true });
@@ -53,7 +55,7 @@ console.log(`已清理临时库 ${LIB}`);
 await browser.close();
 const ok = libs.libs.includes(LIB) && manifest.frames.length >= 12
   && slotCounts.every((n) => n > 0)
-  && frameOk === 200 && bgOk === 200 && errors.length === 0;
+  && frameOk && bgOk && errors.length === 0;
 if (ok) {
   console.log('✅ 建库工具端到端验证通过：上传 → 一键生成(4 档梯度) → 素材库可读，无 JS 错误');
   process.exit(0);

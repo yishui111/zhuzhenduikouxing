@@ -44,7 +44,7 @@ npm run make-test-assets
 会自动创建并生成（全部为合成卡通素材，非真人）：
 
 - `avatar/libs/lib_test/`、`avatar/libs/lib_test2/` —— 两套测试关键帧库（用于体验与验证多库切换）
-- `input/test/test_mouth.wav`、`test_markers.wav`、`test_pitch.wav` —— 测试音频
+- `input/test/test_mouth.wav`、`test_pitch.wav`、`test_vowel.wav` —— 测试音频
 
 > 仓库根目录不附带 `avatar/`、`input/` 目录；脚本会按需创建。`.gitignore` 已忽略这两个目录（存放你的真人素材与运行时产物，不提交）。
 
@@ -52,7 +52,7 @@ npm run make-test-assets
 
 | 配置 | 默认值 | 覆盖方式 | 说明 |
 |------|--------|----------|------|
-| 端口 | 48620 | 环境变量 `PORT`（`set PORT=9090` 后再 `start.bat`），或 `node server.mjs <端口>` | 服务器监听端口 |
+| 端口 | 48625 | 环境变量 `PORT`（`set PORT=9090` 后再 `start.bat`），或 `node server.mjs <端口>` | 服务器监听端口 |
 | ffmpeg | 在 PATH 中查找 | 环境变量 `FFMPEG_PATH` / `FFPROBE_PATH` | `/api/transcode` 转码用；找不到时转码接口返回错误，可自行用外部 ffmpeg 转 H.264 |
 | 浏览器（开发工具用） | 自动探测常见安装位置 | 环境变量 `EDGE_PATH` / `CHROME_PATH` | 仅 tools/ 下的浏览器自动化（smoke/e2e 等）使用 |
 
@@ -60,14 +60,14 @@ npm run make-test-assets
 
 ```bat
 start.bat      # Windows 一键启动：定位 Node → 在 code/ 启动服务器 → 自动打开主页面
-stop.bat       # Windows 一键停止：结束监听 48620 端口的进程（可用 PORT 对齐）
+stop.bat       # Windows 一键停止：结束监听 48625 端口的进程（可用 PORT 对齐）
 ```
 
 Linux / macOS：
 
 ```bash
 cd code
-PORT=48620 node server.mjs &        # 启动
+PORT=48625 node server.mjs &        # 启动
 pkill -f "node server.mjs"          # 停止
 ```
 
@@ -75,8 +75,8 @@ pkill -f "node server.mjs"          # 停止
 
 | 页面 | 地址 | 用途 |
 |------|------|------|
-| 主页面（实时演示） | http://127.0.0.1:48620/web/index.html | 加载素材库 + 音频文件/麦克风 → 实时关键帧拼接 |
-| 建库工具 | http://127.0.0.1:48620/web/preprocess.html | 导入真人录像 → 一键生成嘴型素材库 |
+| 主页面（实时演示） | http://127.0.0.1:48625/web/index.html | 加载素材库 + 音频文件/麦克风 → 实时关键帧拼接 |
+| 建库工具 | http://127.0.0.1:48625/web/preprocess.html | 导入真人录像 → 一键生成嘴型素材库 |
 
 ## 7. 生成自己的真人素材库（三步，核心流程）
 
@@ -125,9 +125,8 @@ Node ≥20 安装后，除第 6 节启动/停止命令外，其余步骤一致�
 | `code/` | 全部源代码、测试、package 锁定 | ✅ 分发 |
 | `docs/`、`录制指南.md`、`AGENTS.md` | 文档 | ✅ 分发 |
 | `avatar/libs/` | 你的真人关键帧素材库（含本人画面） | ❌ 本地生成，`.gitignore` 忽略 |
-| `avatar/models/` | 方案 A 备查的第三方 3D 模型（`.vrm`/`.glb`，代码未引用） | ❌ 第三方资源，自行下载 |
 | `input/` | 本地录像、转码产物、生成的测试音频 | ❌ 本地生成，`.gitignore` 忽略 |
-| `output/` | 开发工具导出产物（如抽帧诊断图） | ❌ 本地生成，`.gitignore` 忽略 |
+| `output/` | 开发工具导出产物 | ❌ 本地生成，`.gitignore` 忽略 |
 
 ## 12. 更新约定
 

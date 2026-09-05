@@ -1,6 +1,6 @@
 // 生成合成"说话"测试视频（零系统依赖）：用本机 Edge 在浏览器里录制
 //   画面：动画卡通脸（嘴随正弦张合）4.8s
-//   音轨：test_markers.wav（含 3 个"记号"音，供建库工具检测分段）
+//   音轨：test_mouth.wav（低/中/高音量段 + 静音，供建库工具能量抽帧）
 // 输出：input/test/test_video.webm
 // 用法：node tools/make-test-video.mjs（需开发服务器在 48620 运行，提供 /api/input）
 import { chromium } from 'playwright-core';
@@ -13,8 +13,8 @@ if (!EXE) {
   console.log('SKIP: 未找到本机 Edge/Chrome，跳过（可用环境变量 EDGE_PATH 指定浏览器）。');
   process.exit(0);
 }
-const BASE = 'http://127.0.0.1:' + (process.env.PORT || 48620);
-const DURATION = 4.8; // 与 test_markers.wav 一致
+const BASE = 'http://127.0.0.1:' + (process.env.PORT || 48625);
+const DURATION = 4.8; // 取 test_mouth.wav 前段（含静音+低/中/高音量）
 const OUT = fileURLToPath(new URL('../../input/test/test_video.webm', import.meta.url));
 
 const browser = await chromium.launch({
@@ -35,7 +35,7 @@ const b64 = await page.evaluate(async ({ duration }) => {
   const ctx = canvas.getContext('2d');
 
   const actx = new AudioContext();
-  const wav = await (await fetch('/api/input/test/test_markers.wav')).arrayBuffer();
+  const wav = await (await fetch('/api/input/test/test_mouth.wav')).arrayBuffer();
   const audioBuf = await actx.decodeAudioData(wav);
   const src = actx.createBufferSource();
   src.buffer = audioBuf;

@@ -1,10 +1,10 @@
 // 轻量静态服务器 + 素材库读写端点（本地开发/建库工具用）
-// 用法：node server.mjs [端口]（默认 48620，可用环境变量 PORT 覆盖）
+// 用法：node server.mjs [端口]（默认 48625，可用环境变量 PORT 覆盖）
 // 静态文件服务 code/ 目录；/api/lib/<库名>/<路径> 读写 avatar/libs/
 // 另导出 createAppServer() 供自测复用
 import { createServer } from 'node:http';
 import { readFile, mkdir, readdir, unlink } from 'node:fs/promises';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, statSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Transform } from 'node:stream';
@@ -19,7 +19,7 @@ const FFMPEG_BIN = process.env.FFMPEG_PATH || 'ffmpeg';
 const FFPROBE_BIN = process.env.FFPROBE_PATH || 'ffprobe';
 
 const ROOT = normalize(fileURLToPath(new URL('.', import.meta.url)));
-const PORT = Number(process.env.PORT) || Number(process.argv[2]) || 48620;
+const PORT = Number(process.env.PORT) || Number(process.argv[2]) || 48625;
 const LIBS_DIR = join(ROOT, '..', 'avatar', 'libs');
 const INPUT_DIR = join(ROOT, '..', 'input');
 
@@ -161,8 +161,16 @@ function handle(req, res, port) {
       await mkdir(dirname(target), { recursive: true });
       await drainTo(req, target, 100 * 1024 * 1024).catch((err) => uploadFail(res, target, err));
       if (res.writableEnded) return;
+      const size = statSync(target).size;
+      if (size === 0) {
+        // 空文件一律拒绝入库（浏览器编码异常时的兜底，防止生成全空素材库）
+        await unlink(target).catch(() => { /* noop */ });
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: '空文件被拒绝' }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, path: rel }));
+      res.end(JSON.stringify({ ok: true, path: rel, bytes: size }));
     })().catch((err) => sendError(res, err));
   }
 

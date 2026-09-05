@@ -1,7 +1,8 @@
 // 生成方案 B 自测素材（零依赖）：
 //   1) avatar/libs/lib_test/  —— 测试关键帧库 A（默认配色卡通脸 PNG + manifest）
 //   2) avatar/libs/lib_test2/ —— 测试关键帧库 B（变体配色，验证多库切换）
-//   3) input/test/  —— 测试音频 WAV（test_mouth.wav 口型 / test_markers.wav 记号 / test_pitch.wav 音高）
+//   3) avatar/libs/lib_test_vowel/ —— 元音口型测试库（a/e/i/o/u 嘴形）
+//   4) input/test/  —— 测试音频 WAV（test_mouth.wav 口型 / test_pitch.wav 音高 / test_vowel.wav 元音）
 // 用法：node tools/make-test-assets.mjs
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -277,18 +278,6 @@ const mouth = concat([
 ]);
 writeFileSync(join(INPUT, 'test_mouth.wav'), encodeWAV(mouth, SR));
 
-const markers = concat([
-  new Float32Array(t(0.3)),
-  makeTone(0.12, SR, 1000, 0.7),
-  makeNoise(1.2, SR, 0.08, 4),
-  makeTone(0.12, SR, 1000, 0.7),
-  makeNoise(1.2, SR, 0.14, 4),
-  makeTone(0.12, SR, 1000, 0.7),
-  makeNoise(1.2, SR, 0.22, 4),
-  new Float32Array(t(0.5)),
-]);
-writeFileSync(join(INPUT, 'test_markers.wav'), encodeWAV(markers, SR));
-
 const pitch = concat([
   makeTone(2.0, SR, 120, 0.3),
   makeTone(2.0, SR, 240, 0.3),
@@ -316,6 +305,5 @@ console.log(`  avatar/libs/lib_test/  （${r1.frames} 帧 + ${r1.clips} 片段�
 console.log(`  avatar/libs/lib_test2/ （${r2.frames} 帧 + ${r2.clips} 片段）`);
 console.log(`  avatar/libs/lib_test_vowel/ （${r3.frames} 帧，元音库 ${r3.vowels} 种嘴形）`);
 console.log(`  ${join(INPUT, 'test_mouth.wav')}（${(mouth.length / SR).toFixed(1)}s）`);
-console.log(`  ${join(INPUT, 'test_markers.wav')}（${(markers.length / SR).toFixed(1)}s）`);
 console.log(`  ${join(INPUT, 'test_pitch.wav')}（${(pitch.length / SR).toFixed(1)}s）`);
 console.log(`  ${join(INPUT, 'test_vowel.wav')}（元音五段）`);

@@ -6,7 +6,7 @@ import { chromium } from 'playwright-core';
 import { fileURLToPath } from 'node:url';
 import { resolveBrowserExe } from './edge.mjs';
 
-const BASE = 'http://127.0.0.1:' + (process.env.PORT || 48620);
+const BASE = 'http://127.0.0.1:' + (process.env.PORT || 48625);
 const SMOKE_URL = process.env.SMOKE_URL || `${BASE}/web/index.html`;
 const PREPROCESS_URL = `${BASE}/web/preprocess.html`;
 const EXE = resolveBrowserExe();
@@ -118,18 +118,19 @@ async function main() {
   console.log('导出文件:', name, '| 大小:', size, '字节 | EBML魔数:', magic, isWebm ? '✓' : '✗');
 
   // —— 阶段 4b：元音口型驱动（共振峰 → a/e/i/o/u 嘴形）——
-  const vowelWav = fileURLToPath(new URL('../../input/test/test_vowel.wav', import.meta.url));
-  await page.goto(`${BASE}/web/index.html?lib=lib_test_vowel`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+  // 用 AEIOU 演示视频作音源（视频文件音轨解码 = 用户实际用法）；断言按序出现 ≥3 种且含顺序 a→e→i
+  const vowelWav = fileURLToPath(new URL('../../input/test/test_vowel_demo.webm', import.meta.url));
+  await page.goto(`${BASE}/web/index.html?lib=lib_aeiou`, { waitUntil: 'domcontentloaded', timeout: 15000 });
   await page.waitForTimeout(2000);   // 等元音素材库加载
   await page.setInputFiles('#file', vowelWav);
-  const vowelSeen = new Set();
-  for (let i = 0; i < 22; i++) {
-    await page.waitForTimeout(400);  // 覆盖 7.5s 音频（五段元音）
+  const vowelSeq = [];
+  for (let i = 0; i < 32; i++) {
+    await page.waitForTimeout(300);  // 覆盖 ~9.8s 音频（五段元音）
     const v = await page.evaluate(() => document.getElementById('status').dataset.vowel || '-');
-    if (v && v !== '-') vowelSeen.add(v);
+    if (v && v !== '-' && v !== vowelSeq[vowelSeq.length - 1]) vowelSeq.push(v);
   }
-  const vowelOk = vowelSeen.size >= 2;
-  console.log('元音驱动: 检出元音 =', [...vowelSeen].sort().join('/') || '无', vowelOk ? '✓' : '✗（应至少检出 2 种）');
+  const vowelOk = vowelSeq.join('').includes('aeiou');
+  console.log('元音驱动: 切换序列 =', vowelSeq.join('→') || '无', vowelOk ? '✓（严格 aeiou 顺序）' : '✗（应按序出现 a/e/i/o/u）');
 
   // —— 阶段 5：建库工具页面启动 ——
   const preprocessErrors = [];
