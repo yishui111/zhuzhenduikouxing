@@ -12,7 +12,7 @@ if (!EXE) {
   process.exit(0);
 }
 const VIDEO = fileURLToPath(new URL('../../input/test/test_video.webm', import.meta.url));
-const BASE = 'http://127.0.0.1:' + (process.env.PORT || 48625);
+const BASE = 'http://127.0.0.1:' + (process.env.PORT || 48620);
 const LIB = 'lib_e2e';
 
 const browser = await chromium.launch({ executablePath: EXE, headless: true });

@@ -8,7 +8,6 @@ export function createAudioInput() {
   let bufSrc = null;
   let stream = null;
   let timeBuf = null;              // 复用的时域缓冲（每帧就地覆写，避免每帧分配）
-  let freqBuf = null;              // 复用的频域缓冲（dB 谱，元音共振峰用）
   const EMPTY = new Float32Array(0);
 
   async function ensure() {
@@ -19,7 +18,6 @@ export function createAudioInput() {
     analyser.smoothingTimeConstant = 0;
     analyser.connect(ctx.destination);
     timeBuf = new Float32Array(analyser.fftSize);
-    freqBuf = new Float32Array(analyser.frequencyBinCount);
     recDest = ctx.createMediaStreamDestination();
     recGain = ctx.createGain();
     recGain.gain.value = 1;
@@ -58,13 +56,6 @@ export function createAudioInput() {
     return timeBuf;
   }
 
-  /** 读取当前频谱（dB，长度 = frequencyBinCount）；复用缓冲，勿跨帧持有 */
-  function getFreqData() {
-    if (!analyser) return EMPTY;
-    analyser.getFloatFrequencyData(freqBuf);
-    return freqBuf;
-  }
-
   /** 音频上下文采样率（F0 提取需要） */
   function getSampleRate() {
     return ctx ? ctx.sampleRate : 48000;
@@ -80,7 +71,7 @@ export function createAudioInput() {
     if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
   }
 
-  return { loadFile, startMic, getTimeData, getFreqData, getSampleRate, getRecordStream, stopAll };
+  return { loadFile, startMic, getTimeData, getSampleRate, getRecordStream, stopAll };
 }
 
 export default { createAudioInput };

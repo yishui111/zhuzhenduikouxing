@@ -5,8 +5,6 @@
 //   3. 静音强制闭嘴：低于静音门限持续 silenceMs 后回 E0×中性
 //   4. 过渡片段优先：同表情档的嘴档变化优先播"过渡片段"，否则交叉淡化
 
-export const SLOT_NAMES = ['E0', 'E1', 'E2', 'E3'];
-
 /**
  * 档位映射：连续 level(0~1) → 嘴档 0..slots-1
  * @param {number} level 0~1
@@ -107,4 +105,4 @@ export function createStateMachine(opts = {}) {
   };
 }
 
-export default { SLOT_NAMES, slotFromLevel, createStateMachine };
+export default { slotFromLevel, createStateMachine };

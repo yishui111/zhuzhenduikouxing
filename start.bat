@@ -3,12 +3,12 @@ rem ============================================================
 rem  light-avatar (frame lip-sync digital human) - start
 rem  Requires: Node.js >= 20
 rem  Starts the local server and opens the main page in browser.
-rem  Port: env PORT or 48625 (e.g. set PORT=9090 before start).
+rem  Port: env PORT or 48620 (e.g. set PORT=9090 before start).
 rem ============================================================
 setlocal
 cd /d "%~dp0"
 
-if not defined PORT set "PORT=48625"
+if not defined PORT set "PORT=48620"
 
 set "NODE="
 where node >nul 2>nul && set "NODE=node"

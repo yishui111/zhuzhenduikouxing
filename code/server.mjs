@@ -1,5 +1,5 @@
 // 轻量静态服务器 + 素材库读写端点（本地开发/建库工具用）
-// 用法：node server.mjs [端口]（默认 48625，可用环境变量 PORT 覆盖）
+// 用法：node server.mjs [端口]（默认 48620，可用环境变量 PORT 覆盖）
 // 静态文件服务 code/ 目录；/api/lib/<库名>/<路径> 读写 avatar/libs/
 // 另导出 createAppServer() 供自测复用
 import { createServer } from 'node:http';
@@ -19,7 +19,7 @@ const FFMPEG_BIN = process.env.FFMPEG_PATH || 'ffmpeg';
 const FFPROBE_BIN = process.env.FFPROBE_PATH || 'ffprobe';
 
 const ROOT = normalize(fileURLToPath(new URL('.', import.meta.url)));
-const PORT = Number(process.env.PORT) || Number(process.argv[2]) || 48625;
+const PORT = Number(process.env.PORT) || Number(process.argv[2]) || 48620;
 const LIBS_DIR = join(ROOT, '..', 'avatar', 'libs');
 const INPUT_DIR = join(ROOT, '..', 'input');
 
@@ -79,7 +79,14 @@ async function uploadFail(res, target, err) {
 function handle(req, res, port) {
   // 本地开发/工具场景放开跨源（如浏览器自动化脚本从 about:blank 抓取素材）
   res.setHeader('Access-Control-Allow-Origin', '*');
-  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+  // API 与静态资源一律禁缓存：素材库内容会更新（重建/换库），缓存旧响应（含偶发 404）会导致切库异常
+  res.setHeader('Cache-Control', 'no-store');
+  if (req.method === 'OPTIONS') {
+    // 预检放行（跨源上传带 Content-Type 头时浏览器先发 OPTIONS）
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.writeHead(204); res.end(); return;
+  }
   const url = new URL(req.url, `http://localhost:${port}`);
   const libPrefix = '/api/lib/';
 
@@ -101,11 +108,15 @@ function handle(req, res, port) {
       let transcoded = false;
       if (codec !== 'h264') {
         const outPath = join(INPUT_DIR, base + '_h264.mp4');
-        await execFileP(FFMPEG_BIN, [
-          '-y', '-i', srcPath,
+        // -nostats 减少输出；偶发进程启动失败时重试一次（实测 Windows 下极低概率）
+        const ffArgs = ['-nostats', '-y', '-i', srcPath,
           '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-pix_fmt', 'yuv420p',
-          '-c:a', 'aac', '-movflags', '+faststart', outPath,
-        ]);
+          '-c:a', 'aac', '-movflags', '+faststart', outPath];
+        try {
+          await execFileP(FFMPEG_BIN, ffArgs, { maxBuffer: 16 * 1024 * 1024 });
+        } catch {
+          await execFileP(FFMPEG_BIN, ffArgs, { maxBuffer: 16 * 1024 * 1024 });
+        }
         file = base + '_h264.mp4';
         transcoded = true;
       }
@@ -182,7 +193,6 @@ function handle(req, res, port) {
     (data) => {
       res.writeHead(200, {
         'Content-Type': MIME[extname(pathname).toLowerCase()] || 'application/octet-stream',
-        'Cache-Control': 'no-store',
       });
       res.end(req.method === 'HEAD' ? undefined : data);
     },
@@ -215,6 +225,10 @@ export function createAppServer() {
     return handle(req, res, PORT);
   });
 }
+
+// 本地工具服务器：捕获未处理异常，记录后继续服务（进程退出会让页面整体不可用）
+process.on('uncaughtException', (err) => { console.error('[uncaughtException]', err); });
+process.on('unhandledRejection', (err) => { console.error('[unhandledRejection]', err); });
 
 // 直接运行（node server.mjs）时启动监听
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

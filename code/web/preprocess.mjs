@@ -145,7 +145,7 @@ function pickFrameTimes(times, db, framesPerSlot, slots = 4) {
 // 输出 JPEG Blob。优先 toBlob（硬件编码直出）；个别内嵌浏览器 toBlob 会产出
 // 0 字节 blob（实测），此时自动回落 toDataURL（base64 解码，兼容性最好）。
 const grabCanvas = document.createElement('canvas');
-grabCanvas.width = 512; grabCanvas.height = 512;
+grabCanvas.width = 512; grabCanvas.height = 512;   // 尺寸在生成时按视频宽高比重设
 function canvasToJpegBlob(canvas) {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
@@ -165,8 +165,9 @@ function grabFrame(time) {
       const ctx = grabCanvas.getContext('2d');
       const vw = video.videoWidth || 720;
       const vh = video.videoHeight || 1280;
-      const sc = Math.max(512 / vw, 512 / vh);
-      ctx.drawImage(video, (512 - vw * sc) / 2, (512 - vh * sc) / 2, vw * sc, vh * sc);
+      const cw = grabCanvas.width, ch = grabCanvas.height;
+      const sc = Math.max(cw / vw, ch / vh);
+      ctx.drawImage(video, (cw - vw * sc) / 2, (ch - vh * sc) / 2, vw * sc, vh * sc);
       canvasToJpegBlob(grabCanvas)
         .then((blob) => { video.removeEventListener('seeked', onSeek); resolve(blob); })
         .catch((err) => { video.removeEventListener('seeked', onSeek); reject(err); });
@@ -200,6 +201,14 @@ $('generate').addEventListener('click', async () => {
       btn.disabled = false;
       return;
     }
+    // 抽帧画布按原视频宽高比设置（"视频啥样窗口就啥样"，不裁剪不变形），短边归一到 512
+    const vw0 = video.videoWidth, vh0 = video.videoHeight;
+    const aspect = vw0 / vh0;
+    const fit = 512 / Math.min(vw0, vh0);
+    grabCanvas.width = Math.round(vw0 * fit);
+    grabCanvas.height = Math.round(vh0 * fit);
+    log(`   画面比例 ${(vw0 / vh0).toFixed(3)}（${vw0}×${vh0}），抽帧 ${grabCanvas.width}×${grabCanvas.height}`);
+
     log('① 采集能量（离线解码音轨…）');
     setProgress(5);
     const { db, times } = await collectEnergy();
@@ -217,9 +226,11 @@ $('generate').addEventListener('click', async () => {
       if ((i + 1) % 8 === 0 || i === picks.length - 1) log(`   帧 ${i + 1}/${picks.length}`);
     }
 
-    log('③ 生成背景帧（切换时显示）');
+    log('③ 生成背景帧（取闭嘴/静音时刻的一帧，切换间隙显示）');
     setProgress(65);
-    const bg = await grabFrame(video.duration / 2);
+    let minIdx = 0;
+    for (let i = 1; i < db.length; i++) if (db[i] < db[minIdx]) minIdx = i;
+    const bg = await grabFrame(Math.max(0, Math.min(video.duration - 0.05, times[minIdx])));
 
     log(`④ 上传素材库 avatar/libs/${name}/ …`);
     const manifestFrames = [];
@@ -238,6 +249,7 @@ $('generate').addEventListener('click', async () => {
         created: new Date().toISOString().slice(0, 10),
         note: `由建库工具一键生成：${(times[times.length - 1] || 0).toFixed(1)}s 录像按嘴巴张开弧度（能量）抽帧 ${frames.length} 张。主页面用能量范围控制显示。`,
         frameMs: 33,
+        aspect: Number(aspect.toFixed(4)),
       },
       background: 'frames/background.jpg',
       frames: manifestFrames,

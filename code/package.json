@@ -10,7 +10,6 @@
     "test": "node --test",
     "make-test-assets": "node tools/make-test-assets.mjs",
     "make-test-video": "node tools/make-test-video.mjs",
-    "make-vowel-demo": "node tools/make-vowel-demo-video.mjs",
     "smoke": "node tools/browser-smoke.mjs",
     "test-build-lib": "node tools/build-lib-e2e.mjs"
   },

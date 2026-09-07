@@ -6,7 +6,7 @@ import { chromium } from 'playwright-core';
 import { fileURLToPath } from 'node:url';
 import { resolveBrowserExe } from './edge.mjs';
 
-const BASE = 'http://127.0.0.1:' + (process.env.PORT || 48625);
+const BASE = 'http://127.0.0.1:' + (process.env.PORT || 48620);
 const SMOKE_URL = process.env.SMOKE_URL || `${BASE}/web/index.html`;
 const PREPROCESS_URL = `${BASE}/web/preprocess.html`;
 const EXE = resolveBrowserExe();
@@ -99,6 +99,31 @@ async function main() {
     const statusAfterSwitch = await page.textContent('#status');
     console.log('切换后状态:', statusAfterSwitch);
   }
+
+  // 切库后画布绘制内容必须变化（不同库的帧 id 命名同构，曾因状态未重置导致切库画面不变）
+  const hashCanvas = () => page.evaluate(() => {
+    const c = document.getElementById('stage');
+    const o = document.createElement('canvas'); o.width = 64; o.height = 64;
+    o.getContext('2d').drawImage(c, 0, 0, 64, 64);
+    return o.getContext('2d').getImageData(0, 0, 64, 64).data.reduce((acc, v, i) => acc + (i % 7 === 0 ? v : 0), 0);
+  });
+  const hashBefore = await hashCanvas();
+  const currentLib = await page.evaluate(() => document.getElementById('lib').value);
+  const thirdLib = await page.evaluate(() => {
+    const sel = document.getElementById('lib');
+    return [...sel.options].map((o) => o.value).find((v) => v && v !== sel.value);
+  });
+  await page.selectOption('#lib', thirdLib);
+  await page.waitForTimeout(1500);
+  const hashAfter = await hashCanvas();
+  const switchPixelsOk = Math.abs(hashAfter - hashBefore) > 50;
+  console.log('切库画布变化:', switchPixelsOk ? '✓' : '✗（差 ' + Math.abs(hashAfter - hashBefore) + '）');
+  await page.selectOption('#lib', otherLib);   // 切回目标库，供后续 switchOk 状态检查
+  await page.waitForFunction(
+    (n) => document.getElementById('status').textContent.includes(n),
+    otherLib,
+    { timeout: 8000 }
+  );
   const switchOk = otherLib === null || (await page.textContent('#status')).includes(otherLib);
 
   // —— 阶段 4：录屏导出（真实下载 webm 并校验）——
@@ -117,21 +142,6 @@ async function main() {
   const isWebm = magic === '1a45dfa3'; // EBML 魔数
   console.log('导出文件:', name, '| 大小:', size, '字节 | EBML魔数:', magic, isWebm ? '✓' : '✗');
 
-  // —— 阶段 4b：元音口型驱动（共振峰 → a/e/i/o/u 嘴形）——
-  // 用 AEIOU 演示视频作音源（视频文件音轨解码 = 用户实际用法）；断言按序出现 ≥3 种且含顺序 a→e→i
-  const vowelWav = fileURLToPath(new URL('../../input/test/test_vowel_demo.webm', import.meta.url));
-  await page.goto(`${BASE}/web/index.html?lib=lib_aeiou`, { waitUntil: 'domcontentloaded', timeout: 15000 });
-  await page.waitForTimeout(2000);   // 等元音素材库加载
-  await page.setInputFiles('#file', vowelWav);
-  const vowelSeq = [];
-  for (let i = 0; i < 32; i++) {
-    await page.waitForTimeout(300);  // 覆盖 ~9.8s 音频（五段元音）
-    const v = await page.evaluate(() => document.getElementById('status').dataset.vowel || '-');
-    if (v && v !== '-' && v !== vowelSeq[vowelSeq.length - 1]) vowelSeq.push(v);
-  }
-  const vowelOk = vowelSeq.join('').includes('aeiou');
-  console.log('元音驱动: 切换序列 =', vowelSeq.join('→') || '无', vowelOk ? '✓（严格 aeiou 顺序）' : '✗（应按序出现 a/e/i/o/u）');
-
   // —— 阶段 5：建库工具页面启动 ——
   const preprocessErrors = [];
   page.removeAllListeners('pageerror');
@@ -145,9 +155,8 @@ async function main() {
   const ok = status.includes('素材库已加载') && canvasInfo.nonBg > 100 && libCount >= 1
     && sawSlot && maxF0 > 100 && sawBrow
     && maxLevel > 0.3 && sawOpenSlot && sawClosed
-    && switchOk
+    && switchOk && switchPixelsOk
     && size > 1000 && isWebm
-    && vowelOk
     && errors.length === 0 && preprocessErrors.length === 0;
 
   await browser.close();
@@ -156,6 +165,7 @@ async function main() {
     process.exit(0);
   }
   console.log('❌ 冒烟测试未通过（errors=' + errors.length + '）');
+  console.log('条件明细:', JSON.stringify({ status: status.includes('素材库已加载'), canvas: canvasInfo.nonBg > 100, libs: libCount >= 1, sawSlot, f0: maxF0 > 100, brow: sawBrow, lvl: maxLevel > 0.3, open: sawOpenSlot, closed: sawClosed, switchOk, switchPixelsOk, size: size > 1000, isWebm, errors: errors.length === 0, pre: preprocessErrors.length === 0 }));
   if (errors.length) console.log(errors.join('\n'));
   process.exit(1);
 }

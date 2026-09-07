@@ -52,7 +52,7 @@ npm run make-test-assets
 
 | 配置 | 默认值 | 覆盖方式 | 说明 |
 |------|--------|----------|------|
-| 端口 | 48625 | 环境变量 `PORT`（`set PORT=9090` 后再 `start.bat`），或 `node server.mjs <端口>` | 服务器监听端口 |
+| 端口 | 48620 | 环境变量 `PORT`（`set PORT=9090` 后再 `start.bat`），或 `node server.mjs <端口>` | 服务器监听端口 |
 | ffmpeg | 在 PATH 中查找 | 环境变量 `FFMPEG_PATH` / `FFPROBE_PATH` | `/api/transcode` 转码用；找不到时转码接口返回错误，可自行用外部 ffmpeg 转 H.264 |
 | 浏览器（开发工具用） | 自动探测常见安装位置 | 环境变量 `EDGE_PATH` / `CHROME_PATH` | 仅 tools/ 下的浏览器自动化（smoke/e2e 等）使用 |
 
@@ -60,14 +60,14 @@ npm run make-test-assets
 
 ```bat
 start.bat      # Windows 一键启动：定位 Node → 在 code/ 启动服务器 → 自动打开主页面
-stop.bat       # Windows 一键停止：结束监听 48625 端口的进程（可用 PORT 对齐）
+stop.bat       # Windows 一键停止：结束监听 48620 端口的进程（可用 PORT 对齐）
 ```
 
 Linux / macOS：
 
 ```bash
 cd code
-PORT=48625 node server.mjs &        # 启动
+PORT=48620 node server.mjs &        # 启动
 pkill -f "node server.mjs"          # 停止
 ```
 
@@ -75,8 +75,8 @@ pkill -f "node server.mjs"          # 停止
 
 | 页面 | 地址 | 用途 |
 |------|------|------|
-| 主页面（实时演示） | http://127.0.0.1:48625/web/index.html | 加载素材库 + 音频文件/麦克风 → 实时关键帧拼接 |
-| 建库工具 | http://127.0.0.1:48625/web/preprocess.html | 导入真人录像 → 一键生成嘴型素材库 |
+| 主页面（实时演示） | http://127.0.0.1:48620/web/index.html | 加载素材库 + 音频文件/麦克风 → 实时关键帧拼接 |
+| 建库工具 | http://127.0.0.1:48620/web/preprocess.html | 导入真人录像 → 一键生成嘴型素材库 |
 
 ## 7. 生成自己的真人素材库（三步，核心流程）
 

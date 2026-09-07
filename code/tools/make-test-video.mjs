@@ -13,7 +13,7 @@ if (!EXE) {
   console.log('SKIP: 未找到本机 Edge/Chrome，跳过（可用环境变量 EDGE_PATH 指定浏览器）。');
   process.exit(0);
 }
-const BASE = 'http://127.0.0.1:' + (process.env.PORT || 48625);
+const BASE = 'http://127.0.0.1:' + (process.env.PORT || 48620);
 const DURATION = 4.8; // 取 test_mouth.wav 前段（含静音+低/中/高音量）
 const OUT = fileURLToPath(new URL('../../input/test/test_video.webm', import.meta.url));
 

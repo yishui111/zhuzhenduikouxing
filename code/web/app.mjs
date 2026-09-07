@@ -2,12 +2,11 @@
 // 素材库加载 → 音频(文件/麦克风) → 能量特征(嘴档) + F0(表情档) → 防抖状态机 → 合成调度 → Canvas 渲染
 import { currentDb } from '../core/features.mjs';
 import { createStateMachine } from '../core/statemachine.mjs';
-import { indexLib, getCandidates, getClips, pickCandidate } from '../core/libloader.mjs';
+import { indexLib, getCandidates, pickCandidate } from '../core/libloader.mjs';
 import { createComposer } from '../core/composer.mjs';
 import { autocorrPitch } from '../core/pitch.mjs';
 import { exprFromFeatures } from '../core/exprmapper.mjs';
 import { autoRange, levelFromDb } from '../core/levelmap.mjs';
-import { estimateFormants, classifyVowel, createVowelTracker } from '../core/formants.mjs';
 import { createRenderer } from './renderer.mjs';
 import { createAudioInput } from './audio.mjs';
 
@@ -39,8 +38,8 @@ const params = {
   silenceDb: -50,
   energyLo: 0.3,      // 能量下限：低于此显示闭嘴图（可配置）
   energyHi: 0.85,     // 能量上限：高于此封顶最大张（可配置）
-  eloHoldMs: 400,     // 低于下限的保持时长（节流防闪回，可配置 0~2000ms）
-  switchIntervalMs: 300, // 换帧间隔：嘴型图片多久换一次（越大越慢，可配置 100~2000ms）
+  eloHoldMs: 250,     // 低于下限的保持时长（节流防闪回，可配置 0~2000ms）
+  switchIntervalMs: 140, // 换帧间隔：嘴型图片多久换一次（快语速需 ≤150ms 才不滞后，可配置）
 };
 
 function bindSlider(id, key, fmt, convert = (v) => v) {
@@ -93,8 +92,6 @@ bindSlider('p_eloHold', 'eloHoldMs', (v) => Math.round(v) + 'ms');
 // —— 素材库加载 ——
 let lib = null;
 let libName = 'lib_test';
-let vowelMap = new Map();      // 元音关键帧：'a'~'u' → 按 slot 升序的帧数组（库含元音帧时自动启用元音驱动）
-const vowelTracker = createVowelTracker({ confirmFrames: 2, holdMs: 200 });
 
 /** 从服务器拉取素材库列表，填充下拉（只显示真实素材库，隐藏 lib_test* 测试库） */
 async function populateLibSelect() {
@@ -127,29 +124,39 @@ function loadImage(src) {
   });
 }
 
+async function fetchManifest(name) {
+  const url = `/api/lib/${name}/manifest.json`;
+  const fetchJson = async () => {
+    const r = await fetch(url);
+    if (r.status === 404) throw new Error(`素材库 "${name}" 不存在`);
+    if (!r.ok) throw new Error(`manifest 加载失败: ${r.status}`);
+    return r.json();
+  };
+  try {
+    return await fetchJson();
+  } catch (e) {
+    if (String(e.message).includes('不存在')) throw e;
+    // Windows 下偶发文件读取瞬抖（杀毒扫描/写入瞬间）导致半截响应，重试一次自愈
+    await new Promise((r) => setTimeout(r, 300));
+    return await fetchJson();
+  }
+}
+
 async function loadLib(name) {
-  const manifest = await (await fetch(`/api/lib/${name}/manifest.json`)).json();
+  if (!name) { statusEl.textContent = '未指定素材库'; return; }
+  const manifest = await fetchManifest(name);
   const idx = indexLib(manifest);
+  // 画布按素材库的原始视频宽高比（"视频啥样窗口就啥样"，不裁剪不变形）；旧库无 aspect 默认方形
+  const aspect = Number(manifest.meta?.aspect) || 1;
+  stage.width = aspect >= 1 ? 512 : Math.round(512 * aspect);
+  stage.height = aspect >= 1 ? Math.round(512 / aspect) : 512;
+  stage.style.aspectRatio = `${stage.width} / ${stage.height}`;
   // 预加载全部帧
   const jobs = [];
   for (const list of idx.frames.values()) {
     for (const f of list) {
       f.img = null;
       jobs.push(loadImage(`/api/lib/${name}/${f.file}`).then((im) => { f.img = im; }));
-    }
-  }
-  // 元音帧（独立索引，vowel 定嘴形、slot 定开合）
-  for (const list of idx.vowelFrames.values()) {
-    for (const f of list) {
-      f.img = null;
-      jobs.push(loadImage(`/api/lib/${name}/${f.file}`).then((im) => { f.img = im; }));
-    }
-  }
-  for (const list of idx.clips.values()) {
-    for (const c of list) {
-      jobs.push(
-        Promise.all(c.files.map((file) => loadImage(`/api/lib/${name}/${file}`))).then((ims) => { c.imgs = ims; })
-      );
     }
   }
   await Promise.all(jobs);
@@ -185,9 +192,15 @@ async function loadLib(name) {
   expr0.sort((a, b) => a.slot - b.slot);
   faceSeq = expr0;
   midStart = Math.floor(faceSeq.length * 0.15);  // 中间段起始帧（接近闭嘴→微张），随库缓存
-  vowelMap = idx.vowelFrames;
-  vowelTracker.reset();
-  statusEl.textContent = `素材库已加载: ${name}（${manifest.frames.length} 帧，嘴型序列 ${faceSeq.length} 帧${vowelMap.size ? `，元音嘴型 ${[...vowelMap.keys()].join('/')} ` : ''}）`;
+  // 换库必须重置换帧状态：不同库的帧 id 命名同构（如都叫 E0_x0_0），
+  // 残留的 curFaceKey 会让程序误以为"帧没变"而拒绝换图——表现为切库后画面毫无变化
+  levelAvg = 0;
+  lastSwitchLevel = -1;
+  curMappedIdx = 0;
+  belowLoSince = null;
+  curFaceKey = null;
+  lastSwitchMs = 0;
+  statusEl.textContent = `素材库已加载: ${name}（${manifest.frames.length} 帧，嘴型序列 ${faceSeq.length} 帧）`;
 }
 
 // 连续嘴型状态（"能量条波动直接驱动嘴"模式）
@@ -247,7 +260,6 @@ let lvCount = 0;
 let levelVar = 0;                          // 兴奋度
 let frameCount = 0;
 let lastF0 = 0;                            // 上次测得的 F0（跨帧保持，供表情映射）
-let vowel = '';                            // 当前生效元音（''=无，清音/低置信时为空）
 
 function estimatePitch(samples, sampleRate) {
   const r = autocorrPitch(samples, sampleRate);
@@ -301,27 +313,6 @@ function frame(nowMs) {
   lvCount = Math.min(lvCount + 1, levelHist.length);
   if (frameCount % 30 === 0) recomputeLevelVar();
 
-  // 元音（每 2 帧同拍）：共振峰 F1/F2 → 元音分类 → 确认+保持平滑。
-  // 仅当库含元音关键帧时才计算（纯能量库零开销）；静音帧强制判空——
-  // 编码底噪会在 F1/F2 频带形成假峰（实测被误判成 u），静音期不得出元音
-  if (vowelMap.size > 0) {
-    if (samples.length === 0) {
-      vowel = vowelTracker.step('', nowMs);       // 无音频输入：确认后清空元音
-    } else if (frameCount % 2 === 0) {
-      const spec = audio.getFreqData();
-      const fm = spec.length ? estimateFormants(spec, audio.getSampleRate()) : null;
-      const audible = db > stateMachine.params.silenceDb + 2;   // 高于静音门限 2dB 余量
-      const cls = fm && audible ? classifyVowel(fm.f1, fm.f2) : { vowel: '' };
-      vowel = vowelTracker.step(cls.vowel, nowMs);
-      setDs('f1', fm && audible ? fm.f1.toFixed(0) : '0');      // 供自动化测试/调试读取
-      setDs('f2', fm && audible ? fm.f2.toFixed(0) : '0');
-    }
-    setDs('vowel', vowel || '-');
-  } else if (vowel !== '') {
-    vowel = '';
-    setDs('vowel', '-');
-  }
-
   const autoExpr = exprFromFeatures({ f0, f0Base, levelVar });
   const expr = autoExpr;   // 表情由 F0 自动驱动（素材含表情帧时生效）
   const r = stateMachine.step({ db, level, expr, nowMs });
@@ -362,18 +353,20 @@ function frame(nowMs) {
       const t = (mouthDrive - LO) / Math.max(0.001, HI - LO);  // 0~1 区间
       mappedIdx = Math.min(faceSeq.length - 1, midStart + Math.round(t * (faceSeq.length - 1 - midStart)));
     } else {
-      // 低于下限：节流——持续 eloHoldMs 才切闭嘴图；能量快速为 0 又回来时保持原图
-      if (belowLoSince === null) belowLoSince = nowMs;
-      mappedIdx = nowMs - belowLoSince >= params.eloHoldMs ? 0 : curMappedIdx;
+      // 低于下限：区分"连续说话中的轻音节"与"真正静音"——
+      // 说话中（平滑能量仍高）保持微开帧（快语速时嘴型小幅连续变化，不静止）；
+      // 平滑能量也低（真停顿）才启动 eloHoldMs 闭嘴节流
+      if (levelAvg > 0.25) {
+        belowLoSince = nowMs;
+        mappedIdx = Math.min(faceSeq.length - 1, midStart > 0 ? midStart : 1);
+      } else {
+        if (belowLoSince === null) belowLoSince = nowMs;
+        mappedIdx = nowMs - belowLoSince >= params.eloHoldMs ? 0 : curMappedIdx;
+      }
     }
 
     let target = null;
-    const vList = vowel !== '' ? vowelMap.get(vowel) : null;
-    if (vList && vList.length > 0 && mouthDrive >= LO) {
-      // 元音嘴型优先：元音定形状、能量在元音组内定开合档；低于能量下限仍走闭嘴
-      const t2 = Math.min(1, (mouthDrive - LO) / Math.max(0.001, HI - LO));
-      target = vList[Math.min(vList.length - 1, Math.round(t2 * (vList.length - 1)))];
-    } else if (expr === 0) {
+    if (expr === 0) {
       target = faceSeq[mappedIdx];
     } else {
       // 表情档（微笑/挑眉）：选该表情、嘴档接近当前驱动的帧（Map 预建索引，O(1)）
@@ -391,7 +384,7 @@ function frame(nowMs) {
       curMappedIdx = mappedIdx;
       const isFirst = curFaceKey === null;
       curFaceKey = target.id;
-      composer.enter({ key: target.id, img: target.img, mode: 'fade' });
+      composer.enter({ key: target.id, img: target.img });
       // 状态栏只在档位/静音状态变化时更新（避免每帧闪烁文字）
       const slotOf = Math.min(3, Math.max(0, target.slot ?? 0));
       if (!isFirst && (slotOf !== lastStatusSlot || r.silent !== lastStatusSilent)) {
@@ -403,19 +396,12 @@ function frame(nowMs) {
   } else if (lib && composer.currentKey() === null) {
     // 初始帧
     const cand = pickCandidate(lib, 0, expr);
-    if (cand && cand.img) composer.enter({ key: cand.id, img: cand.img, mode: 'fade' });
+    if (cand && cand.img) composer.enter({ key: cand.id, img: cand.img });
   }
 
-  // 渲染（说话"活"感）：说话时画面有呼吸缩放+轻微位移+嘴型切换，静音静止。
-  // 幅度克制（最大 ~1.4% 缩放 / ~3px 位移），不会"整体乱动"也不会"像拍照"
+  // 渲染：画面其余部分绝对静止，只有嘴部随换帧混合（任何整幅缩放/位移都会产生闪烁感）
   const layers = composer.step(nowMs);
-  const tSec = nowMs / 1000;
-  const talking = level > 0.25 ? 1 : 0;
-  const motion = {
-    scale: 1 + (level * 0.008 + 0.006 * Math.sin(tSec * 2 * Math.PI * 0.8)) * talking,
-    dy: (level - 0.5) * 2 + Math.sin(tSec * 2 * Math.PI * 0.6) * 1.8 * talking,
-  };
-  renderer.draw(layers, motion);
+  renderer.draw(layers);
   if (recorder && recVideoTrack && recVideoTrack.requestFrame) recVideoTrack.requestFrame();
 
   // —— 原始声音能量条（对比用：绿色填充随声音能量伸缩 + 4 档刻度）——
@@ -545,7 +531,7 @@ const banner = (text, kind = '') => {
   try {
     // 防呆：必须通过服务器访问（双击打开 file:// 无法加载素材库，会黑屏）
     if (location.protocol !== 'http:' && location.protocol !== 'https:') {
-      const msg = '⚠️ 请通过 http://127.0.0.1:48625 访问（先运行 start.bat），不要直接双击打开文件';
+      const msg = '⚠️ 请通过 http://127.0.0.1:48620 访问（先运行 start.bat），不要直接双击打开文件';
       statusEl.textContent = msg;
       banner(msg, 'bad');
       return;

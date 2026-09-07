@@ -1,83 +1,53 @@
 // 合成调度（纯逻辑）：状态机事件 → 画布绘制指令
-// 产出每帧要画的图层列表 [{img, alpha}]，img 是浏览器 Image 或测试占位对象
-// 切换采用"渐隐渐现"：先淡出旧帧（outDur），再淡入新帧（inDur），两层不叠加 ——
-// 真人帧叠加会产生"闪/重影"，渐隐渐现更干净
-
+// 切换采用"交叉淡化"：旧帧渐隐与新帧渐显同时进行（alpha 互补，任一时刻两层不透明度之和恒为 1）。
+// 关键帧之间身体部分完全相同（不重影），只有嘴部平滑过渡——观感是"嘴在动"而不是闪黑。
+// （旧版"先淡出再淡入"中途存在全暗瞬间，实测逐帧播放时画面一闪一闪，已废弃）
 export function createComposer({ transitionMs = 90 } = {}) {
   let cur = null;       // { key, img }
-  let fade = null;      // { fromImg, targetImg, t0Ms, outDur, inDur }
+  let fade = null;      // { fromImg, t0Ms }
   let now = 0;
 
+  function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+
   /**
-   * 推进到绝对时间 ms，返回绘制图层。
+   * 推进到绝对时间 ms，返回绘制图层（先旧帧后新帧，新帧覆盖在上）。
    * @returns {Array<{img, alpha}>}
    */
   function step(ms) {
     now = ms;
     const layers = [];
-    let curVisible = true;
+    let fromAlpha = 0;
     if (fade) {
-      // 缓动曲线：ease-in-out cubic，开头结尾慢、中间快，过渡更柔和
-      const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
-      const tOut = (now - fade.t0Ms) / fade.outDur;
-      if (tOut < 1) {
-        // 阶段1：淡出旧帧（新帧不显示）
-        layers.push({ img: fade.fromImg, alpha: Math.max(0, 1 - ease(Math.max(0, tOut))) });
-        curVisible = false;
-      } else {
-        const tIn = (now - fade.t0Ms - fade.outDur) / fade.inDur;
-        if (tIn < 1) {
-          // 阶段2：淡入新帧（旧帧已消失）
-          layers.push({ img: fade.targetImg, alpha: Math.max(0, ease(Math.max(0, tIn))) });
-          curVisible = false;
-        } else {
-          fade = null;   // 切换完成
-        }
-      }
+      const t = (now - fade.t0Ms) / transitionMs;
+      if (t >= 1) fade = null;
+      else fromAlpha = Math.max(0, 1 - easeInOutCubic(Math.max(0, t)));
     }
-    if (cur && curVisible) layers.push({ img: cur.img, alpha: 1 });
+    if (fade && fromAlpha > 0) layers.push({ img: fade.fromImg, alpha: fromAlpha });
+    if (cur && cur.img) layers.push({ img: cur.img, alpha: 1 - fromAlpha });
     return layers;
   }
 
   /**
-   * 切换到目标状态（渐隐渐现：淡出旧帧 → 淡入新帧）。
+   * 切换到目标状态（交叉淡化到新帧）。
    * @param {{key:string, img:object}} target
    */
   function enter(target) {
-    if (!cur) {
-      // 初始帧：直接显示，无过渡
+    if (!cur || cur.key === target.key) {
+      // 初始帧或同帧：直接显示，无过渡
       cur = { key: target.key, img: target.img };
       fade = null;
       return;
     }
     const fromImg = cur.img;
     cur = { key: target.key, img: target.img };
-    fade = {
-      fromImg,
-      targetImg: cur.img,
-      t0Ms: now,
-      outDur: transitionMs / 2,
-      inDur: transitionMs / 2,
-    };
-  }
-
-  /** 候选帧轮换：同状态内更换底图（渐隐渐现） */
-  function swap(img) {
-    if (!cur) return;
-    const fromImg = cur.img;
-    cur.img = img;
-    fade = {
-      fromImg,
-      targetImg: cur.img,
-      t0Ms: now,
-      outDur: Math.min(40, transitionMs / 2),
-      inDur: Math.min(40, transitionMs / 2),
-    };
+    fade = { fromImg, t0Ms: now };
   }
 
   function currentKey() { return cur ? cur.key : null; }
 
-  return { step, enter, swap, currentKey, setTransitionMs: (v) => { transitionMs = v; } };
+  return { step, enter, currentKey, setTransitionMs: (v) => { transitionMs = v; } };
 }
 
 export default { createComposer };

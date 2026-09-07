@@ -32,15 +32,21 @@ header h1 { margin: 0; font-size: 20px; }
   padding: 20px;
   max-width: 1100px;
   margin: 0 auto;
+  align-items: flex-start;
 }
-.stage { flex: 1; min-width: 0; }
+/* 左右两列各自吸顶：小视口（如 1366×768）下画布与参数面板同屏可见，面板内部滚动 */
+.stage { flex: 1; min-width: 0; position: sticky; top: 12px; }
 #stage {
-  width: 100%;
-  max-width: 512px;
-  aspect-ratio: 1;
+  /* 内在宽高由 JS 按素材库的视频宽高比设置（style.aspectRatio），此处只做视口约束：
+     竖屏视频显示为竖长窗口、横屏为扁宽窗口，均完整无裁剪 */
+  max-width: 100%;
+  max-height: calc(100vh - 300px);
+  width: auto;
+  height: auto;
+  display: block;
+  margin: 0 auto;
   background: #333;
   border-radius: 8px;
-  display: block;
 }
 .nav { padding: 8px 24px; background: #eef1f5; border-bottom: 1px solid #dde3ea; font-size: 13px; }
 .nav a { color: #2f6fdb; text-decoration: none; }
@@ -61,6 +67,10 @@ header h1 { margin: 0; font-size: 20px; }
   border-radius: 10px;
   padding: 16px;
   box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
 }
 .panel h2 {
   font-size: 14px;
@@ -86,4 +96,17 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .slider { margin: 8px 0; }
 .slider label { display: flex; justify-content: space-between; font-size: 12px; color: #455; }
 .slider input[type="range"] { width: 100%; }
+/* 可折叠参数分组（小屏防面板过高） */
+details.grp summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: #2f6fdb;
+  padding: 6px 8px;
+  background: #f0f3f7;
+  border-radius: 6px;
+  margin: 8px 0 4px;
+  user-select: none;
+}
+details.grp[open] summary { margin-bottom: 2px; }
+details.grp .slider:first-of-type { margin-top: 6px; }
 .hint { font-size: 12px; color: #778; line-height: 1.5; margin: 4px 0 8px; background: #f0f3f7; padding: 8px; border-radius: 6px; }

@@ -21,6 +21,13 @@
     .slot-row { margin-bottom: 8px; }
     .slot-row .slot-label { font-size: 12px; color: #556; font-weight: bold; margin-bottom: 2px; }
     #done { display: none; margin-top: 8px; }
+    details.howto { background: #f0f3f7; border-radius: 6px; margin: 6px 0 10px; font-size: 13px; color: #334; }
+    details.howto summary { cursor: pointer; padding: 8px 10px; font-weight: bold; color: #2a5db0; }
+    details.howto .body { padding: 0 12px 10px; line-height: 1.7; }
+    details.howto h4 { margin: 8px 0 2px; color: #2a5db0; }
+    details.howto table { border-collapse: collapse; margin: 4px 0; }
+    details.howto td, details.howto th { border: 1px solid #ccd; padding: 3px 8px; font-size: 12px; }
+    details.howto .warn { color: #b33; }
   </style>
 </head>
 <body>
@@ -38,6 +45,29 @@
         📹 拍摄要求：<b>手机放稳、头别动、说话时嘴型有变化</b>（闭嘴说几句 → 嘴张大说几句），
         时长 10 秒~1 分钟，带声音（mp4/webm 均可）。
       </div>
+      <details class="howto">
+        <summary>📖 怎么拍？点开看详细指引（发给别人拍也照这个）</summary>
+        <div class="body">
+          <h4>通用准备（拍什么都适用）</h4>
+          ① 手机用支架/书本垫高立稳，<span class="warn">放稳后别再碰</span>；② 人坐正，画面拍到<b>头和肩膀</b>，脸对着镜头；
+          ③ 灯光照脸别背光，背景干净；④ <span class="warn">头尽量别动</span>（下巴轻抵手掌/枕头最容易稳）；
+          ⑤ 先试录 10 秒回放：脸清楚吗？声音清楚吗？没问题再正式录。
+
+          <h4>拍法 A：日常说话视频（做"嘴巴开合"图库，最常用）</h4>
+          时长 30 秒~1 分钟。内容随意聊天或念文章，关键是<b>嘴要真张开</b>：
+          先正常说几句 → 张大嘴说几句 → 微张开说几句 → 笑着说几句 → 最后闭嘴停 3 秒。
+          每段开头大声喊个"一、二、三…"更好（音量变化明显，自动分档更准）。
+
+          <h4>拍法 B：夸张嘴型视频（嘴型变化分明，测试跟随效果最直观）</h4>
+          按顺序夸张地读五个音，<b>每个音拖长约 1.5 秒</b>，音与音之间<b>停 1 秒</b>，连读 2~3 轮：
+          啊（张大嘴）→ 欸（半开咧嘴）→ 衣（扁长嘴）→ 哦（圆嘴）→ 乌（撅小圆嘴）。
+          拍完 → 去<b>主页面</b>选你生成的素材库，把这个视频拖进"音频输入"，
+          看数字人的嘴巴开合是否跟着你的声音节奏变化。
+
+          <h4>最容易犯的 3 个错</h4>
+          ❌ 手拿着手机录（画面晃，做出来会"闪"）　❌ 头一直动（画面会"跳"）　❌ 嘴没真张开（表情档位不够用）
+        </div>
+      </details>
       <input type="file" id="video" accept="video/*" />
       <video id="videoEl" controls playsinline></video>
     </section>

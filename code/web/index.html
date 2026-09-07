@@ -40,15 +40,18 @@
       <p class="hint">能量条 0~100%，按下面的范围对应到不同的嘴型图片：低于下限显示闭嘴，高于上限固定最大张，中间按范围逐张对应。</p>
       <div class="slider"><label>能量下限（低于→闭嘴） <span id="p_elo_val"></span></label><input type="range" id="p_elo" min="0" max="60" step="1" value="30" /></div>
       <div class="slider"><label>能量上限（高于→最大张） <span id="p_ehi_val"></span></label><input type="range" id="p_ehi" min="40" max="100" step="1" value="85" /></div>
-      <div class="slider"><label>低于下限的保持时长（防闪回） <span id="p_eloHold_val"></span></label><input type="range" id="p_eloHold" min="0" max="2000" step="100" value="400" /></div>
+      <div class="slider"><label>低于下限的保持时长（防闪回） <span id="p_eloHold_val"></span></label><input type="range" id="p_eloHold" min="0" max="2000" step="50" value="250" /></div>
 
       <h2>参数</h2>
-      <div class="slider"><label>换帧间隔（越大换得越慢） <span id="p_sw_val"></span></label><input type="range" id="p_sw" min="100" max="2000" step="50" value="300" /></div>
-      <div class="slider"><label>灵敏度 <span id="p_sens_val"></span></label><input type="range" id="p_sens" min="0.2" max="2" step="0.05" value="1" /></div>
-      <div class="slider"><label>强度 <span id="p_strength_val"></span></label><input type="range" id="p_strength" min="0.2" max="1.5" step="0.05" value="1" /></div>
-      <div class="slider"><label>声音频率(F0)权重（0=纯能量） <span id="p_f0w_val"></span></label><input type="range" id="p_f0w" min="0" max="100" step="1" value="34" /></div>
-      <div class="slider"><label>过渡时长（切换柔和度） <span id="p_trans_val"></span></label><input type="range" id="p_trans" min="60" max="250" step="10" value="100" /></div>
-      <div class="slider"><label>静音门限（0=自动） <span id="p_sil_val"></span></label><input type="range" id="p_sil" min="-70" max="0" step="1" value="0" /></div>
+      <div class="slider"><label>换帧间隔（越大换得越慢） <span id="p_sw_val"></span></label><input type="range" id="p_sw" min="100" max="2000" step="10" value="140" /></div>
+      <details class="grp">
+        <summary>高级参数（灵敏度 / 强度 / 音调权重 / 过渡 / 静音）</summary>
+        <div class="slider"><label>灵敏度 <span id="p_sens_val"></span></label><input type="range" id="p_sens" min="0.2" max="2" step="0.05" value="1" /></div>
+        <div class="slider"><label>强度 <span id="p_strength_val"></span></label><input type="range" id="p_strength" min="0.2" max="1.5" step="0.05" value="1" /></div>
+        <div class="slider"><label>声音频率(F0)权重（0=纯能量） <span id="p_f0w_val"></span></label><input type="range" id="p_f0w" min="0" max="100" step="1" value="34" /></div>
+        <div class="slider"><label>过渡时长（切换柔和度） <span id="p_trans_val"></span></label><input type="range" id="p_trans" min="60" max="250" step="10" value="100" /></div>
+        <div class="slider"><label>静音门限（0=自动） <span id="p_sil_val"></span></label><input type="range" id="p_sil" min="-70" max="0" step="1" value="0" /></div>
+      </details>
 
       <h2>导出</h2>
       <div class="row">
