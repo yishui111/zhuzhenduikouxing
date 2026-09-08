@@ -159,7 +159,7 @@ function canvasToJpegBlob(canvas) {
     }, 'image/jpeg', 0.85);
   });
 }
-function grabFrame(time) {
+function grabFrameCanvas(time) {
   return new Promise((resolve, reject) => {
     const onSeek = () => {
       const ctx = grabCanvas.getContext('2d');
@@ -168,13 +168,18 @@ function grabFrame(time) {
       const cw = grabCanvas.width, ch = grabCanvas.height;
       const sc = Math.max(cw / vw, ch / vh);
       ctx.drawImage(video, (cw - vw * sc) / 2, (ch - vh * sc) / 2, vw * sc, vh * sc);
-      canvasToJpegBlob(grabCanvas)
-        .then((blob) => { video.removeEventListener('seeked', onSeek); resolve(blob); })
-        .catch((err) => { video.removeEventListener('seeked', onSeek); reject(err); });
+      const out = document.createElement('canvas');
+      out.width = cw; out.height = ch;
+      out.getContext('2d').drawImage(grabCanvas, 0, 0);
+      video.removeEventListener('seeked', onSeek);
+      resolve(out);
     };
     video.addEventListener('seeked', onSeek);
     video.currentTime = Math.max(0, Math.min(video.duration - 0.05, time));
   });
+}
+function grabFrame(time) {
+  return grabFrameCanvas(time).then((cv) => canvasToJpegBlob(cv));
 }
 
 // —— 5. 一键生成 ——
@@ -218,21 +223,93 @@ $('generate').addEventListener('click', async () => {
     const framesPerSlot = Math.max(1, Math.round(total / 4));
     log(`② 按嘴巴张开弧度抽帧（闭嘴→微张→中张→大张 各 ${framesPerSlot} 张，共 ${framesPerSlot * 4} 张）`);
     const picks = pickFrameTimes(times, db, framesPerSlot);
-    const frames = [];
+    log(`   ${picks.length} 个候选帧（按嘴巴张开弧度分档）`);
+
+    // 先抓原始帧画面（canvas 副本）
+    const rawFrames = [];
     for (let i = 0; i < picks.length; i++) {
-      const blob = await grabFrame(picks[i].t);
-      frames.push({ slot: picks[i].slot, blob });
-      setProgress(5 + ((i + 1) / picks.length) * 55);
-      if ((i + 1) % 8 === 0 || i === picks.length - 1) log(`   帧 ${i + 1}/${picks.length}`);
+      const cv = await grabFrameCanvas(picks[i].t);
+      rawFrames.push({ slot: picks[i].slot, cv });
+      setProgress(5 + ((i + 1) / picks.length) * 45);
+      if ((i + 1) % 8 === 0 || i === picks.length - 1) log(`   抓帧 ${i + 1}/${picks.length}`);
     }
 
-    log('③ 生成背景帧（取闭嘴/静音时刻的一帧，切换间隙显示）');
-    setProgress(65);
+    // 底板 = 能量最低（闭嘴/静音）的一帧
     let minIdx = 0;
     for (let i = 1; i < db.length; i++) if (db[i] < db[minIdx]) minIdx = i;
-    const bg = await grabFrame(Math.max(0, Math.min(video.duration - 0.05, times[minIdx])));
+    const baseIdx = picks.findIndex((p) => Math.abs(p.t - times[minIdx]) < 0.15);
+    const baseCv = rawFrames[baseIdx >= 0 ? baseIdx : 0].cv;
 
-    log(`④ 上传素材库 avatar/libs/${name}/ …`);
+    // 嘴部活动区域自动检测：所有帧与底板的差异包围盒（说话时嘴部变化最大）
+    const dw = 96, dh = Math.max(1, Math.round(96 * baseCv.height / baseCv.width));
+    const dCanvas = document.createElement('canvas'); dCanvas.width = dw; dCanvas.height = dh;
+    const dCtx = dCanvas.getContext('2d');
+    const pixelsOf = (cv) => { dCtx.clearRect(0, 0, dw, dh); dCtx.drawImage(cv, 0, 0, dw, dh); return dCtx.getImageData(0, 0, dw, dh).data; };
+    const basePx = pixelsOf(baseCv);
+    const rowHit = new Float32Array(dh), colHit = new Float32Array(dw);
+    for (const f of rawFrames) {
+      const px = pixelsOf(f.cv);
+      for (let y = 0; y < dh; y++) for (let x = 0; x < dw; x++) {
+        const i = (y * dw + x) * 4;
+        const d = Math.abs(px[i] - basePx[i]) + Math.abs(px[i + 1] - basePx[i + 1]) + Math.abs(px[i + 2] - basePx[i + 2]);
+        if (d > 48) { rowHit[y]++; colHit[x]++; }
+      }
+    }
+    // 嘴部活动区域 = 以帧间差异质心为中心、上限尺寸（高 32% × 宽 64%）的窗口。
+    // 录制规范要求头不动 → 帧间变化集中在嘴部；窗口收紧后窗外画面绝对静止
+    // （大窗口会把头部/脸部的微小活动全部带入，整幅画面看起来就在动）
+    const centroid = (arr) => { let s = 0, w = 0; for (let i = 0; i < arr.length; i++) { s += i * arr[i]; w += arr[i]; } return w ? Math.round(s / w) : Math.floor(arr.length / 2); };
+    const cyy = centroid(rowHit), cxx = centroid(colHit);
+    const bh = Math.max(Math.round(dh * 0.06), Math.round(dh * 0.32));
+    const bw = Math.max(Math.round(dw * 0.1), Math.round(dw * 0.64));
+    const boxRows = [Math.max(0, Math.min(dh - bh, cyy - Math.round(bh / 2))), 0];
+    boxRows[1] = boxRows[0] + bh - 1;
+    const boxCols = [Math.max(0, Math.min(dw - bw, cxx - Math.round(bw / 2))), 0];
+    boxCols[1] = boxCols[0] + bw - 1;
+    let [ry0, ry1] = boxRows;
+    let [cx0, cx1] = boxCols;
+    const my = (ry1 - ry0) * 0.12, mx = (cx1 - cx0) * 0.12;
+    ry0 = Math.max(0, ry0 - my); ry1 = Math.min(dh - 1, ry1 + my);
+    cx0 = Math.max(0, cx0 - mx); cx1 = Math.min(dw - 1, cx1 + mx);
+    const kx = baseCv.width / dw, ky = baseCv.height / dh;
+    const box = { x: Math.floor(cx0 * kx), y: Math.floor(ry0 * ky), w: Math.ceil((cx1 - cx0 + 1) * kx), h: Math.ceil((ry1 - ry0 + 1) * ky) };
+    log(`   嘴部活动区域：x=${box.x} y=${box.y} ${box.w}×${box.h}（其余画面将保持绝对静止）`);
+
+    // 每帧 = 底板 + 嘴部活动区域替换为该帧画面 → 除嘴区外像素完全一致（画面绝对静止）
+    // 嘴区贴片边缘做羽化（渐变过渡到底板）：帧间人脸的微小错位不会在贴片边界形成"小视频框"缝
+    const feather = Math.max(12, Math.round(Math.min(box.w, box.h) * 0.09));
+    const mask = document.createElement('canvas');
+    mask.width = box.w; mask.height = box.h;
+    const mctx = mask.getContext('2d');
+    mctx.fillStyle = '#fff';
+    mctx.fillRect(feather, feather, box.w - feather * 2, box.h - feather * 2);
+    const patch = document.createElement('canvas');
+    patch.width = box.w; patch.height = box.h;
+    const pctx = patch.getContext('2d');
+    log('④ 合成口型帧（底板 + 嘴部区域羽化贴片）…');
+    const frames = [];
+    for (let i = 0; i < rawFrames.length; i++) {
+      pctx.clearRect(0, 0, box.w, box.h);
+      pctx.drawImage(rawFrames[i].cv, box.x, box.y, box.w, box.h, 0, 0, box.w, box.h);
+      pctx.globalCompositeOperation = 'destination-in';
+      pctx.filter = `blur(${Math.round(feather / 3)}px)`;
+      pctx.drawImage(mask, 0, 0);
+      pctx.filter = 'none';
+      pctx.globalCompositeOperation = 'source-over';
+      const out = document.createElement('canvas');
+      out.width = baseCv.width; out.height = baseCv.height;
+      const octx = out.getContext('2d');
+      octx.drawImage(baseCv, 0, 0);
+      octx.drawImage(patch, box.x, box.y);
+      const blob = await canvasToJpegBlob(out);
+      frames.push({ slot: rawFrames[i].slot, blob });
+      setProgress(50 + ((i + 1) / rawFrames.length) * 20);
+    }
+    // 背景帧 = 底板闭嘴画面（切换间隙显示）
+    const bg = await canvasToJpegBlob(baseCv);
+
+    log(`⑥ 上传素材库 avatar/libs/${name}/ …`);
+    setProgress(75);
     const manifestFrames = [];
     for (let i = 0; i < frames.length; i++) {
       const id = `E${frames[i].slot}_x0_${i}`;

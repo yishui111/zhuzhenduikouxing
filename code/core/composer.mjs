@@ -47,7 +47,10 @@ export function createComposer({ transitionMs = 90 } = {}) {
 
   function currentKey() { return cur ? cur.key : null; }
 
-  return { step, enter, currentKey, setTransitionMs: (v) => { transitionMs = v; } };
+  /** 清空当前帧与过渡（切换素材库时用：旧库帧不得残留在新库画布上） */
+  function reset() { cur = null; fade = null; }
+
+  return { step, enter, reset, currentKey, setTransitionMs: (v) => { transitionMs = v; } };
 }
 
 export default { createComposer };

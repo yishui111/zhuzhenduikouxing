@@ -2,9 +2,31 @@
 // 上传合成测试视频(test_video.webm) → 一键生成嘴型图库(lib_e2e) → 校验服务器素材库 → 清理
 // 用法：node tools/build-lib-e2e.mjs（需开发服务器 48620 运行 + 已生成 test_video.webm）
 import { chromium } from 'playwright-core';
+import { spawn } from 'node:child_process';
 import { rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolveBrowserExe } from './edge.mjs';
+// 自管服务器：48620 不可达时自动拉起（本进程子进程），结束时带走；已在运行则直接复用
+let _server = null;
+let _owned = false;
+try {
+  const r = await fetch('http://127.0.0.1:48620/api/libs');
+  if (!r.ok) throw 0;
+} catch {
+  _server = spawn(process.execPath, ['server.mjs'], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: { ...process.env, PORT: '48620' },
+    stdio: 'ignore',
+  });
+  _owned = true;
+  let up = false;
+  for (let i = 0; i < 20; i++) {
+    try { const r = await fetch('http://127.0.0.1:48620/api/libs'); if (r.ok) { up = true; break; } } catch {}
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  if (!up) { console.log('SKIP: 服务器启动失败'); process.exit(0); }
+}
+process.on('exit', () => { if (_owned && _server) { try { _server.kill(); } catch {} } });
 
 const EXE = resolveBrowserExe();
 if (!EXE) {

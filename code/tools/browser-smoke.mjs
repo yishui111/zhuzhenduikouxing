@@ -3,8 +3,30 @@
 // 用法：node tools/browser-smoke.mjs
 // 前置：开发服务器已在 48620 运行（start.bat）；本机安装 Edge 或 Chrome
 import { chromium } from 'playwright-core';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolveBrowserExe } from './edge.mjs';
+// 自管服务器：48620 不可达时自动拉起（本进程子进程），结束时带走；已在运行则直接复用
+let _server = null;
+let _owned = false;
+try {
+  const r = await fetch('http://127.0.0.1:48620/api/libs');
+  if (!r.ok) throw 0;
+} catch {
+  _server = spawn(process.execPath, ['server.mjs'], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: { ...process.env, PORT: '48620' },
+    stdio: 'ignore',
+  });
+  _owned = true;
+  let up = false;
+  for (let i = 0; i < 20; i++) {
+    try { const r = await fetch('http://127.0.0.1:48620/api/libs'); if (r.ok) { up = true; break; } } catch {}
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  if (!up) { console.log('SKIP: 服务器启动失败'); process.exit(0); }
+}
+process.on('exit', () => { if (_owned && _server) { try { _server.kill(); } catch {} } });
 
 const BASE = 'http://127.0.0.1:' + (process.env.PORT || 48620);
 const SMOKE_URL = process.env.SMOKE_URL || `${BASE}/web/index.html`;

@@ -1,5 +1,5 @@
 // 生成"口型同步测试"素材（自测闭环的标准答案）：
-//   音频：共振峰合成的人声结构音节序列（慢速段 / 快速段 / 中速段），幅度与音节开度对应
+//   音频：共振峰合成的人声结构音节序列（慢速段 / 快速段 / 中速段），响度与嘴型开度对应
 //   视频：二次元形象逐音节切换口型（与音频同一份时间轴，逐帧对齐）
 //   素材库：lib_lipsync —— 8 档嘴部开合关键帧（比旧 4 档更细腻）
 // 产物：input/test/test_lipsync.webm + .mp4 + test_lipsync_curve.json（理论开度曲线，供滞后分析）
@@ -161,7 +161,7 @@ function drawFace(open) {
   }
 }
 
-// —— 共振峰合成（与 core/formants.mjs 参考点一致）——
+// —— 共振峰合成（人声结构的测试音）——
 function synthVowelSamples(sr, dur, F, amp, f0Start = 132, f0End = 116) {
   const n = Math.round(dur * sr);
   const pulse = new Float32Array(n);

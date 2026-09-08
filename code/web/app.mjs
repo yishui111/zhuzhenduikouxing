@@ -151,6 +151,9 @@ async function loadLib(name) {
   stage.width = aspect >= 1 ? 512 : Math.round(512 * aspect);
   stage.height = aspect >= 1 ? Math.round(512 / aspect) : 512;
   stage.style.aspectRatio = `${stage.width} / ${stage.height}`;
+  // 切库瞬间清掉上一个库的画面（旧帧与新库背景构图不同，叠加会显示成"错位的小视频框"）；
+  // 主循环随后会用新库的闭嘴帧作为初始帧重新显示
+  composer.reset();
   // 预加载全部帧
   const jobs = [];
   for (const list of idx.frames.values()) {
@@ -194,6 +197,14 @@ async function loadLib(name) {
   midStart = Math.floor(faceSeq.length * 0.15);  // 中间段起始帧（接近闭嘴→微张），随库缓存
   // 换库必须重置换帧状态：不同库的帧 id 命名同构（如都叫 E0_x0_0），
   // 残留的 curFaceKey 会让程序误以为"帧没变"而拒绝换图——表现为切库后画面毫无变化
+  levelAvg = 0;
+  lastSwitchLevel = -1;
+  curMappedIdx = 0;
+  belowLoSince = null;
+  curFaceKey = null;
+  lastSwitchMs = 0;
+  // 换库必须重置换帧状态：不同库的帧 id 命名同构（如都叫 E0_x0_0），
+  // 残留的 curFaceKey 会让程序误判"帧没变"而拒绝换图——表现为切库后画面毫无变化
   levelAvg = 0;
   lastSwitchLevel = -1;
   curMappedIdx = 0;
@@ -354,11 +365,12 @@ function frame(nowMs) {
       mappedIdx = Math.min(faceSeq.length - 1, midStart + Math.round(t * (faceSeq.length - 1 - midStart)));
     } else {
       // 低于下限：区分"连续说话中的轻音节"与"真正静音"——
-      // 说话中（平滑能量仍高）保持微开帧（快语速时嘴型小幅连续变化，不静止）；
+      // 说话中（平滑能量仍高）按响度连续收小嘴型（轻音节微开、不静止、不强制固定档）；
       // 平滑能量也低（真停顿）才启动 eloHoldMs 闭嘴节流
       if (levelAvg > 0.25) {
         belowLoSince = nowMs;
-        mappedIdx = Math.min(faceSeq.length - 1, midStart > 0 ? midStart : 1);
+        const lt = Math.max(0, Math.min(1, level / Math.max(0.01, params.energyLo)));
+        mappedIdx = Math.round(lt * midStart);
       } else {
         if (belowLoSince === null) belowLoSince = nowMs;
         mappedIdx = nowMs - belowLoSince >= params.eloHoldMs ? 0 : curMappedIdx;
