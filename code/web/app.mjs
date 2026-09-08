@@ -474,6 +474,23 @@ function frame(nowMs) {
   }
 }
 
+// —— 删除素材库（当前下拉选中的库；二次确认防误删）——
+$('libDel').addEventListener('click', async () => {
+  const name = $('lib').value;
+  if (!name) { statusEl.textContent = '没有可删除的素材库'; return; }
+  if (!confirm(`确定删除素材库 "${name}" 吗？
+该库的全部嘴型图片将被删除，无法恢复。`)) return;
+  try {
+    const r = await fetch(`/api/lib/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error('删除失败: ' + r.status);
+    await populateLibSelect();                       // 重新填充下拉（自动指向第一个可用库）
+    statusEl.textContent = `素材库 ${name} 已删除`;
+    if ($('lib').value) await loadLib($('lib').value);   // 还有别的库则切换过去
+  } catch (err) {
+    statusEl.textContent = '删除失败: ' + err.message;
+  }
+});
+
 // —— 事件 ——
 $('lib').addEventListener('change', async (e) => {
   libName = e.target.value;

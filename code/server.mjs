@@ -3,7 +3,7 @@
 // 静态文件服务 code/ 目录；/api/lib/<库名>/<路径> 读写 avatar/libs/
 // 另导出 createAppServer() 供自测复用
 import { createServer } from 'node:http';
-import { readFile, mkdir, readdir, unlink } from 'node:fs/promises';
+import { readFile, mkdir, readdir, unlink, rm } from 'node:fs/promises';
 import { createWriteStream, statSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -162,6 +162,21 @@ function handle(req, res, port) {
       },
       (err) => sendError(res, err)
     );
+  }
+
+  // —— 素材库删除：DELETE /api/lib/<库名>（整库删除，仅允许删库名层级，带防护）——
+  if (req.method === 'DELETE' && url.pathname.startsWith(libPrefix)) {
+    const libName = decodeURIComponent(url.pathname.slice(libPrefix.length)).replace(/[\/].*$/, '');
+    if (!libName || /[\.*]/.test(libName)) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('bad lib name'); return;
+    }
+    const target = safePath(LIBS_DIR, libName);
+    rm(target, { recursive: true, force: true }).then(
+      () => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, deleted: libName })); },
+      (err) => sendError(res, err)
+    );
+    return;
   }
 
   // —— 素材库上传：POST /api/lib/<库名>/<相对路径> ——
